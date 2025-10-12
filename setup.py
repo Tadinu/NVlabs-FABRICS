@@ -27,19 +27,17 @@ if os.uname().machine == 'aarch64':
     INSTALL_REQUIRES = [
         "warp-lang>=1.5.0",
         "pyyaml",
-        "urdfpy",
         "numpy>=1.23.5"
-        ]
+    ]
 # Install dependencies including pytorch
 else:
     INSTALL_REQUIRES = [
         "torch>=2.4.0",
-        #"torchvision>=0.15.2",
-        #"torchaudio==2.0.2", # NOTE: don't think we need this for now.
+        # "torchvision>=0.15.2",
+        # "torchaudio==2.0.2", # NOTE: don't think we need this for now.
         "warp-lang>=1.5.0",
         "pyyaml",
-        "urdfpy",
         "numpy>=1.23.5"
-        ]
+    ]
 
 setuptools.setup(install_requires=INSTALL_REQUIRES)

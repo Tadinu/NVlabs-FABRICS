@@ -9,6 +9,8 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 """
 
 import numpy as np
+import random
+
 
 class RobotVisualizer():
     def __init__(self, robot_dir_name, robot_name, batch_size, device,
@@ -21,12 +23,16 @@ class RobotVisualizer():
         self.simulation_app = SimulationApp({"headless": False})
 
         from omni.isaac.core import SimulationContext
-        #from omni.isaac.core.articulations import Articulation
+        # from omni.isaac.core.articulations import Articulation
         from omni.isaac.core.world import World
         from omni.isaac.core.articulations import ArticulationView
         from omni.isaac.core.utils.stage import add_reference_to_stage
         from omni.isaac.core.prims import XFormPrimView
-        
+
+        from isaacsim.util.debug_draw import _debug_draw
+
+        self.drawer = _debug_draw.acquire_debug_draw_interface()
+
         # Fabrics imports
         from fabrics_sim.utils.path_utils import get_world_path, get_object_urdf_path, get_robot_usd_path
 
@@ -39,7 +45,7 @@ class RobotVisualizer():
 
         if World.instance():
             World.instance().clear_instance()
-        self.world=World()
+        self.world = World()
         self.world.scene.add_default_ground_plane()
 
         # Add body spheres
@@ -58,7 +64,7 @@ class RobotVisualizer():
 
         for i in range(batch_size):
             robot_str = "/World/Robot_" + str(i + 1)
-            print('Added robot', str(i+1))
+            print('Added robot', str(i + 1))
             add_reference_to_stage(usd_path=robot_path, prim_path=robot_str)
 
         # Now initialize physics
@@ -66,7 +72,7 @@ class RobotVisualizer():
 
         # Create articulation view which we will use to teleport the robot joints
         robot_range = "/World/Robot_[1-9]|[1-9][0-9]{1,3}|9000"
-        self.robots_view =\
+        self.robots_view = \
             ArticulationView(prim_paths_expr=robot_range, name="robots_view")
         self.robots_view.initialize()
         self.robots_view.set_enabled_self_collisions(np.array([False] * batch_size))
@@ -74,41 +80,42 @@ class RobotVisualizer():
 
         # Add robot view to world
         self.world.scene.add(self.robots_view)
-        
+
         # set root body poses
-        #new_positions = np.array([[-1.0, 1.0, 0], [1.0, 1.0, 0]])
-        self.robot_base_positions = self.create_grid(spacing = spacing)
+        # new_positions = np.array([[-1.0, 1.0, 0], [1.0, 1.0, 0]])
+        self.robot_base_positions = self.create_grid(spacing=spacing)
         self.robots_view.set_world_poses(positions=self.robot_base_positions)
 
-#        self.robots_view.set_solver_position_iteration_counts(np.full((self.batch_size,), 64))
-#        self.robots_view.set_solver_velocity_iteration_counts(np.full((self.batch_size,), 3))
+        #        self.robots_view.set_solver_position_iteration_counts(np.full((self.batch_size,), 64))
+        #        self.robots_view.set_solver_velocity_iteration_counts(np.full((self.batch_size,), 3))
 
-        inertias = np.tile(np.array([0.1, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.1]), (self.batch_size, self.robots_view.num_bodies, 1))
+        inertias = np.tile(np.array([0.1, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.1]),
+                           (self.batch_size, self.robots_view.num_bodies, 1))
         self.robots_view.set_body_inertias(inertias)
 
-        #print(self.robots_view.get_body_masses())
-        #input(self.robots_view.get_body_inertias())
+        # print(self.robots_view.get_body_masses())
+        # input(self.robots_view.get_body_inertias())
 
         # Add in fabrics world model objects
         if world_model is not None:
             self.object_handles = []
             self.add_world_objects(world_model)
             self.objects_view = XFormPrimView(prim_paths_expr="/World/Robot_*/Object_*",
-                                                   name='objects_view')
+                                              name='objects_view')
             self.objects_view.initialize()
             self.world.scene.add(self.objects_view)
 
-        #print(self.robots_view.dof_names)
-        #input(self.robots_view.get_dof_limits())
-        
+        # print(self.robots_view.dof_names)
+        # input(self.robots_view.get_dof_limits())
+
         # take a physics step to create all the handles, etc.
         self.simulation_context.play()
-        
+
         # Since the joint order in isaac sim does not necessarily match the joint order in fabrics,
         # we have to generate a list of joint indices that allow us to rearrange the incoming
         # fabric joint positions such that the joint positions are issued to the correct isaac sim
         # joints
-        self.joint_indices =\
+        self.joint_indices = \
             [self.fabric_joint_names.index(joint_name) for joint_name in self.robots_view.dof_names]
 
     def add_robot_spheres(self, robot_body_sphere_radii):
@@ -164,10 +171,11 @@ class RobotVisualizer():
 
     def set_robot_sphere_position(self, sphere_position):
         self.robot_sphere_view.set_world_poses(positions=sphere_position)
-#        for i in range(self.batch_size):
-#            for j in range(len(self.robot_sphere_handles[i])):
-#                sphere_pos = sphere_position[i, j]  + self.robot_base_positions[i]
-#                self.robot_sphere_handles[i][j].set_world_pose(sphere_pos)
+
+    #        for i in range(self.batch_size):
+    #            for j in range(len(self.robot_sphere_handles[i])):
+    #                sphere_pos = sphere_position[i, j]  + self.robot_base_positions[i]
+    #                self.robot_sphere_handles[i][j].set_world_pose(sphere_pos)
 
     def create_grid(self, spacing=2.):
         # Set up grid spacing
@@ -193,6 +201,42 @@ class RobotVisualizer():
 
         return xyz
 
+    @staticmethod
+    def quat_from_euler(e: np.ndarray, i: int = 0, j: int = 1, k: int = 2) -> np.ndarray:
+        """Convert Euler angles to a quaternion.
+
+        The integers ``i, j, k`` select axes in the set ``{0, 1, 2}`` that
+        determine the Euler-sequence used.  They must satisfy ``i ≠ j`` and
+        ``j ≠ k``.  For example, the XYZ sequence corresponds to ``(0, 1, 2)``.
+
+        Args:
+            e (vec3): The Euler angles (in radians)
+            i (int): The index of the first axis
+            j (int): The index of the second axis
+            k (int): The index of the third axis
+
+        Returns:
+            quat: The quaternion
+        """
+        # Half angles
+        half_e = 0.5 * e
+
+        # Precompute sines and cosines of half angles
+        cr = np.cos(half_e[i])
+        sr = np.sin(half_e[i])
+        cp = np.cos(half_e[j])
+        sp = np.sin(half_e[j])
+        cy = np.cos(half_e[k])
+        sy = np.sin(half_e[k])
+
+        # Components of the quaternion based on the rotation sequence
+        return np.array([
+            (cy * sr * cp - sy * cr * sp),
+            (cy * cr * sp + sy * sr * cp),
+            (sy * cr * cp - cy * sr * sp),
+            (cy * cr * cp + sy * sr * sp)]
+        )
+
     def render(self, joint_position, joint_velocity, sphere_position, target_position):
         # set the joint positions for each robot
         self.robots_view.set_joint_positions(joint_position[:, self.joint_indices])
@@ -202,16 +246,20 @@ class RobotVisualizer():
         if sphere_position is not None:
             sphere_world_pos = sphere_position.copy()
             for i in range(self.batch_size):
-                sphere_world_pos[i * self.num_spheres : (i + 1) * self.num_spheres, :] +=\
+                sphere_world_pos[i * self.num_spheres: (i + 1) * self.num_spheres, :] += \
                     np.array([self.robot_base_positions[i, :]])
 
             self.set_robot_sphere_position(sphere_world_pos)
 
+        self.drawer.clear_points()
+        pos = (target_position[:, :3] + self.robot_base_positions).tolist()
+        # quat = [self.quat_from_euler(target_position[i, 3:]) for i in range(target_position.shape[0])]
+        self.drawer.draw_points(pos, [[0, 1, 0, 1]] * len(pos), [20] * len(pos))
+
         # step and render
         self.simulation_context.step(render=True)
 
-        #print('errors', joint_position - self.robots_view.get_joint_positions())
-        error = joint_position - self.robots_view.get_joint_positions()
+        # print('errors', joint_position - self.robots_view.get_joint_positions())
 
     def close(self):
         self.simulation_context.stop()

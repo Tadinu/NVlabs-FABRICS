@@ -1,5 +1,5 @@
 # Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.                          
-                                                                                                     
+
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual                           
 # property and proprietary rights in and to this material, related                                   
 # documentation and any modifications thereto. Any use, reproduction,                                
@@ -15,30 +15,30 @@ import warp as wp
 
 from fabrics_sim.fabric_terms.fabric_term import BaseFabricTerm
 
+
 @wp.kernel
 def collision_response(
-    # inputs
-    robot_body_points: wp.array(dtype=wp.vec3, ndim=2),
-    robot_body_point_vels: wp.array(dtype=wp.vec3, ndim=2),
-    sphere_radius: wp.array(dtype=float, ndim=2),
-    object_mesh: wp.array(dtype=wp.uint64, ndim=2),
-    object_indicator: wp.array(dtype=wp.uint64, ndim=2),
-    max_depth: float,
-    min_depth: float,
-    engage_depth: float,
-    breakaway_depth: float,
-    breakaway_velocity: float,
-    metric_scalar: float,
-    velocity_gate: bool,
-    velocity_gate_sharpness: float,
-    velocity_gate_offset: float,
-    sphere_mesh_checked: wp.array(dtype=wp.int32, ndim=3),
-    sphere_collision_matrix: wp.array(dtype=wp.int64, ndim=2),
-    # outputs
-    signed_sphere_distance: wp.array(dtype=float, ndim=2),
-    base_acceleration: wp.array(dtype=wp.vec3, ndim=2),
-    metric: wp.array(dtype=float, ndim=3)):
-
+        # inputs
+        robot_body_points: wp.array(dtype=wp.vec3, ndim=2),
+        robot_body_point_vels: wp.array(dtype=wp.vec3, ndim=2),
+        sphere_radius: wp.array(dtype=float, ndim=2),
+        object_mesh: wp.array(dtype=wp.uint64, ndim=2),
+        object_indicator: wp.array(dtype=wp.uint64, ndim=2),
+        max_depth: float,
+        min_depth: float,
+        engage_depth: float,
+        breakaway_depth: float,
+        breakaway_velocity: float,
+        metric_scalar: float,
+        velocity_gate: bool,
+        velocity_gate_sharpness: float,
+        velocity_gate_offset: float,
+        sphere_mesh_checked: wp.array(dtype=wp.int32, ndim=3),
+        sphere_collision_matrix: wp.array(dtype=wp.int64, ndim=2),
+        # outputs
+        signed_sphere_distance: wp.array(dtype=float, ndim=2),
+        base_acceleration: wp.array(dtype=wp.vec3, ndim=2),
+        metric: wp.array(dtype=float, ndim=3)):
     batch_index, point_index, mesh_index, second_point_index = wp.tid()
 
     # Early out if env mesh does not exist 
@@ -46,13 +46,13 @@ def collision_response(
         return
 
     # Now query closest distance between mesh object using this center face point and normal.
-    d = float(0.0)              # hit distance along ray
-    u = float(0.0)              # hit  face barycentric u
-    v = float(0.0)              # hit  face barycentric u
-    sign = float(0.0)           # hit face sign, value > 0 if ray hit front of face
-    n = wp.vec3()               # hit face normal
-    f = int(0)                  # hit face index
-    inside = float(0.)          # < 0 if inside the mesh, 0 >= otherwise
+    d = float(0.0)  # hit distance along ray
+    u = float(0.0)  # hit  face barycentric u
+    v = float(0.0)  # hit  face barycentric u
+    sign = float(0.0)  # hit face sign, value > 0 if ray hit front of face
+    n = wp.vec3()  # hit face normal
+    f = int(0)  # hit face index
+    inside = float(0.)  # < 0 if inside the mesh, 0 >= otherwise
     bary_u = float(0.)
     bary_v = float(0.)
 
@@ -64,7 +64,7 @@ def collision_response(
         wp.atomic_add(sphere_mesh_checked, batch_index, point_index, mesh_index, 1)
 
         sphere_center_point = robot_body_points[batch_index, point_index]
-        
+
         # Query for distance between current body point and mesh
         got_dist = wp.mesh_query_point(object_mesh[batch_index, mesh_index],
                                        sphere_center_point, max_depth, inside, f, bary_u, bary_v)
@@ -75,7 +75,7 @@ def collision_response(
             # First get the closest point on the mesh to the body point
             closest_point = wp.mesh_eval_position(object_mesh[batch_index, mesh_index],
                                                   f, bary_u, bary_v)
-        
+
             # Direction from sphere to closest point on the mesh
             n = wp.normalize(closest_point - sphere_center_point)
 
@@ -100,47 +100,47 @@ def collision_response(
             # 1) If the body point is too close to the mesh, then create response
             # 2) If the body point is moving towards the object while being sufficiently close,
             #    then, create response
-            #if d_signed <= engage_depth or (dir_vel < breakaway_velocity and d_signed < breakaway_depth):
-            #if True: # dir_vel <= breakaway_velocity or d_signed <= breakaway_depth:
+            # if d_signed <= engage_depth or (dir_vel < breakaway_velocity and d_signed < breakaway_depth):
+            # if True: # dir_vel <= breakaway_velocity or d_signed <= breakaway_depth:
             if d_signed <= engage_depth:
 
                 # Add a weighted acceleration to the existing base acceleration response
-                wp.atomic_add(base_acceleration, batch_index, point_index, metric_scalar * (1./d) * n)
-                    
+                wp.atomic_add(base_acceleration, batch_index, point_index, metric_scalar * (1. / d) * n)
+
                 # Create a rank deficient metric that cares about the direction towards collision
                 # and scale according to a metric scalar parameter and barrier response
                 point_metric = wp.mat33()
                 if d_signed <= breakaway_depth:
-                    point_metric = wp.outer(n, n) * metric_scalar * (1./d)
+                    point_metric = wp.outer(n, n) * metric_scalar * (1. / d)
                 else:
                     switch = float(1.)
                     if velocity_gate:
-                        switch = 0.5 * (wp.tanh(-velocity_gate_sharpness*(dir_vel - velocity_gate_offset)) + 1.)
-                    point_metric = wp.outer(n, n) * metric_scalar * (1./d) * switch
-                
+                        switch = 0.5 * (wp.tanh(-velocity_gate_sharpness * (dir_vel - velocity_gate_offset)) + 1.)
+                    point_metric = wp.outer(n, n) * metric_scalar * (1. / d) * switch
+
                 # Add the metric to the existing metric response
                 for i in range(3):
                     for j in range(3):
-                        wp.atomic_add(metric, batch_index, point_index * 3 + i, point_index * 3 + j, point_metric[i,j])
+                        wp.atomic_add(metric, batch_index, point_index * 3 + i, point_index * 3 + j, point_metric[i, j])
 
     # Now check for body sphere collisions
     # Check the collision matrix. If value == 1, then calculate distance and collision response
     if sphere_collision_matrix[point_index, second_point_index] == 1:
         # Create a vector pointing from the current body point to another body point
-        point1_to_point2 = robot_body_points[batch_index, second_point_index] -\
+        point1_to_point2 = robot_body_points[batch_index, second_point_index] - \
                            robot_body_points[batch_index, point_index]
         # Normalize this vector
         n = wp.normalize(point1_to_point2)
 
         # Calculate the distance between these two body spheres by calculating the distance between
         # the two body points and subtracting the radii of the spheres
-        d_signed = wp.length(point1_to_point2) -\
-                   sphere_radius[batch_index, point_index] -\
+        d_signed = wp.length(point1_to_point2) - \
+                   sphere_radius[batch_index, point_index] - \
                    sphere_radius[batch_index, second_point_index]
-            
+
         # Clamp d so that it is postively bounded
         d = wp.clamp(d_signed, min_depth, max_depth)
-            
+
         # Project robot point velocity along direction to closest collision
         # Positive dir_vel means means moving away from the mesh
         dir_vel = -wp.dot(n, robot_body_point_vels[batch_index, point_index])
@@ -151,40 +151,42 @@ def collision_response(
         # Since the distance is between a pair of body spheres, update the signed distance
         # of the other point in the pair too
         wp.atomic_min(signed_sphere_distance, batch_index, second_point_index, d_signed)
-            
+
         # Conditions for creating a metric and acceleration response:
         # 1) If the body point is too close to the other body point, then create response
         # 2) If the body point is moving towards the other body point while being sufficiently close
         #    then, create response
-        #if d_signed <= engage_depth or (dir_vel > breakaway_velocity and d_signed < breakaway_depth):
-        #if dir_vel <= breakaway_velocity or d_signed <= breakaway_depth:
-        #if True:
+        # if d_signed <= engage_depth or (dir_vel > breakaway_velocity and d_signed < breakaway_depth):
+        # if dir_vel <= breakaway_velocity or d_signed <= breakaway_depth:
+        # if True:
         if d_signed <= engage_depth:
             # Add a weighted acceleration to the existing base acceleration response
-            wp.atomic_add(base_acceleration, batch_index, point_index, metric_scalar * (1./d) * n)
+            wp.atomic_add(base_acceleration, batch_index, point_index, metric_scalar * (1. / d) * n)
             # Update second point of pair
-            wp.atomic_add(base_acceleration, batch_index, second_point_index, metric_scalar * (1./d) * (-n))
+            wp.atomic_add(base_acceleration, batch_index, second_point_index, metric_scalar * (1. / d) * (-n))
 
             # Create a rank deficient metric that cares about the direction towards collision
             # and scale according to a metric scalar parameter and barrier response
             point_metric = wp.mat33()
             point_metric2 = wp.mat33()
             if d_signed <= breakaway_depth:
-                point_metric = wp.outer(n, n) * metric_scalar * (1./d)
-                point_metric2 = wp.outer(-n, -n) * metric_scalar * (1./d)
+                point_metric = wp.outer(n, n) * metric_scalar * (1. / d)
+                point_metric2 = wp.outer(-n, -n) * metric_scalar * (1. / d)
             else:
                 switch = float(1.)
                 if velocity_gate:
-                    switch = 0.5 * (wp.tanh(-velocity_gate_sharpness*(dir_vel - velocity_gate_offset)) + 1.)
-                point_metric = wp.outer(n, n) * metric_scalar * (1./d) * switch
-                point_metric2 = wp.outer(-n, -n) * metric_scalar * (1./d) * switch
-            
+                    switch = 0.5 * (wp.tanh(-velocity_gate_sharpness * (dir_vel - velocity_gate_offset)) + 1.)
+                point_metric = wp.outer(n, n) * metric_scalar * (1. / d) * switch
+                point_metric2 = wp.outer(-n, -n) * metric_scalar * (1. / d) * switch
+
             # Add the metric to the existing metric response
             for i in range(3):
                 for j in range(3):
-                    wp.atomic_add(metric, batch_index, point_index * 3 + i, point_index * 3 + j, point_metric[i,j])
+                    wp.atomic_add(metric, batch_index, point_index * 3 + i, point_index * 3 + j, point_metric[i, j])
                     # Update second point of pair
-                    wp.atomic_add(metric, batch_index, second_point_index * 3 + i, second_point_index * 3 + j, point_metric2[i,j])
+                    wp.atomic_add(metric, batch_index, second_point_index * 3 + i, second_point_index * 3 + j,
+                                  point_metric2[i, j])
+
 
 def eval_collision_response_func(point_positions, point_velocities, allocated_data):
     """
@@ -206,32 +208,32 @@ def eval_collision_response_func(point_positions, point_velocities, allocated_da
     num_meshes = allocated_data['object_mesh'].shape[1]
 
     # Clear the previous values for distance
-    #signed_sphere_distance = 0. * wp.torch.to_torch(allocated_data['signed_sphere_distance']) + 1e6
+    # signed_sphere_distance = 0. * wp.torch.to_torch(allocated_data['signed_sphere_distance']) + 1e6
     signed_sphere_distance = wp.torch.to_torch(allocated_data['signed_sphere_distance'])
     signed_sphere_distance.zero_().add_(1e6)
     allocated_data['signed_sphere_distance'] = wp.torch.from_torch(signed_sphere_distance)
 
     # Zero out metric and base acceleration
-    #metric = 0. * wp.torch.to_torch(allocated_data['metric'])
+    # metric = 0. * wp.torch.to_torch(allocated_data['metric'])
     metric = wp.torch.to_torch(allocated_data['metric'])
     metric.zero_()
     allocated_data['metric'] = wp.torch.from_torch(metric)
 
-    #base_acceleration = 0. * wp.torch.to_torch(allocated_data['base_acceleration'])
+    # base_acceleration = 0. * wp.torch.to_torch(allocated_data['base_acceleration'])
     base_acceleration = wp.torch.to_torch(allocated_data['base_acceleration'])
     base_acceleration.zero_()
     allocated_data['base_acceleration'] = wp.torch.from_torch(base_acceleration, dtype=wp.vec3)
 
     # Allocate or re-allocate sphere_mesh_checked data if needed
-    if allocated_data['sphere_mesh_checked'] is None or\
-       allocated_data['sphere_mesh_checked'].shape[2] != num_meshes:
-           allocated_data['sphere_mesh_checked'] =\
-               wp.zeros(shape=(batch_size, num_points, num_meshes),
-                        dtype=wp.int32,
-                        device=allocated_data['device'])
-    
+    if allocated_data['sphere_mesh_checked'] is None or \
+            allocated_data['sphere_mesh_checked'].shape[2] != num_meshes:
+        allocated_data['sphere_mesh_checked'] = \
+            wp.zeros(shape=(batch_size, num_points, num_meshes),
+                     dtype=wp.int32,
+                     device=allocated_data['device'])
+
     # Reset whether meshes were checked against robot for collision
-    #sphere_mesh_checked = 0 * wp.torch.to_torch(allocated_data['sphere_mesh_checked'])
+    # sphere_mesh_checked = 0 * wp.torch.to_torch(allocated_data['sphere_mesh_checked'])
     sphere_mesh_checked = wp.torch.to_torch(allocated_data['sphere_mesh_checked'])
     sphere_mesh_checked.zero_()
     allocated_data['sphere_mesh_checked'] = wp.torch.from_torch(sphere_mesh_checked)
@@ -256,18 +258,19 @@ def eval_collision_response_func(point_positions, point_velocities, allocated_da
                   allocated_data['velocity_gate_offset'],
                   allocated_data['sphere_mesh_checked'],
                   allocated_data['sphere_collision_matrix']
-                  ],
+              ],
               outputs=[
                   allocated_data['signed_sphere_distance'],
                   allocated_data['base_acceleration'],
                   allocated_data['metric']
-                  ],
+              ],
               device=allocated_data['device'])
+
 
 # Define PyTorch autograd op to invoke collision response kernel, performing the
 # forward and backward pass
 class CollisionResponse(torch.autograd.Function):
-    
+
     @staticmethod
     def forward(ctx, point_positions, point_velocities, allocated_data):
         """
@@ -284,13 +287,13 @@ class CollisionResponse(torch.autograd.Function):
         ctx.point_positions = wp.torch.from_torch(point_positions, dtype=wp.vec3)
         ctx.point_velocities = wp.torch.from_torch(point_velocities, dtype=wp.vec3)
         ctx.allocated_data = allocated_data
-        
+
         with ctx.tape:
             eval_collision_response_func(
                 ctx.point_positions,
                 ctx.point_velocities,
                 ctx.allocated_data)
-        
+
         return (wp.torch.to_torch(ctx.allocated_data['signed_sphere_distance']),
                 wp.torch.to_torch(ctx.allocated_data['base_acceleration']),
                 wp.torch.to_torch(ctx.allocated_data['metric']))
@@ -307,7 +310,7 @@ class CollisionResponse(torch.autograd.Function):
         ctx.allocated_data['signed_sphere_distance'].grad = wp.torch.from_torch(adj_signed_sphere_distance)
         ctx.allocated_data['base_acceleration'].grad = wp.torch.from_torch(adj_base_acceleration)
         ctx.allocated_data['metric'].grad = wp.torch.from_torch(adj_metric)
-    
+
         # Calculate gradients
         ctx.tape.backward()
 
@@ -318,11 +321,13 @@ class CollisionResponse(torch.autograd.Function):
                 wp.torch.to_torch(ctx.tape.gradients[ctx.point_velocities]),
                 None)
 
+
 class BaseFabricRepulsion():
     """
     Calculates base metric, acceleration, and signed distance for every body sphere
     origin on the robot.
     """
+
     def __init__(self, params, batch_size, sphere_radius, collision_matrix, device):
         """
         Constructor.
@@ -338,31 +343,32 @@ class BaseFabricRepulsion():
         self._accel_dir = None
         self._signed_distance = None
         self._in_collision = None
-        
+
         # Dictionary of various signals required for repulsion calculations.
-        self.allocated_data =\
-            { 'batch_size': batch_size,
-              'num_points': self._num_points,
-              'robot_body_points': wp.zeros(shape=(batch_size, self._num_points), dtype=wp.vec3, device=device),
-              'robot_body_point_vels': wp.zeros(shape=(batch_size, self._num_points), dtype=wp.vec3, device=device),
-              'sphere_radius': wp.torch.from_torch(sphere_radius),
-              'object_mesh': None,
-              'object_indicator': None,
-              'max_depth': params['max_depth'],
-              'min_depth': params['min_depth'],
-              'engage_depth': params['engage_depth'],
-              'breakaway_depth': params['breakaway_depth'],
-              'breakaway_velocity': params['breakaway_velocity'],
-              'metric_scalar': params['metric_scalar'],
-              'velocity_gate': params['velocity_gate'],
-              'velocity_gate_sharpness': params['velocity_gate_sharpness'],
-              'velocity_gate_offset': params['velocity_gate_offset'],
-              'sphere_mesh_checked': None,
-              'sphere_collision_matrix': wp.torch.from_torch(collision_matrix),
-              'signed_sphere_distance': wp.zeros(shape=(batch_size, self._num_points), dtype=float, device=device),
-              'base_acceleration': wp.zeros(shape=(batch_size, self._num_points), dtype=wp.vec3, device=device),
-              'metric': wp.zeros(shape=(batch_size, self._num_points * 3, self._num_points * 3), dtype=float, device=device),
-              'device': device }
+        self.allocated_data = \
+            {'batch_size': batch_size,
+             'num_points': self._num_points,
+             'robot_body_points': wp.zeros(shape=(batch_size, self._num_points), dtype=wp.vec3, device=device),
+             'robot_body_point_vels': wp.zeros(shape=(batch_size, self._num_points), dtype=wp.vec3, device=device),
+             'sphere_radius': wp.torch.from_torch(sphere_radius),
+             'object_mesh': None,
+             'object_indicator': None,
+             'max_depth': params['max_depth'],
+             'min_depth': params['min_depth'],
+             'engage_depth': params['engage_depth'],
+             'breakaway_depth': params['breakaway_depth'],
+             'breakaway_velocity': params['breakaway_velocity'],
+             'metric_scalar': params['metric_scalar'],
+             'velocity_gate': params['velocity_gate'],
+             'velocity_gate_sharpness': params['velocity_gate_sharpness'],
+             'velocity_gate_offset': params['velocity_gate_offset'],
+             'sphere_mesh_checked': None,
+             'sphere_collision_matrix': wp.torch.from_torch(collision_matrix),
+             'signed_sphere_distance': wp.zeros(shape=(batch_size, self._num_points), dtype=float, device=device),
+             'base_acceleration': wp.zeros(shape=(batch_size, self._num_points), dtype=wp.vec3, device=device),
+             'metric': wp.zeros(shape=(batch_size, self._num_points * 3, self._num_points * 3), dtype=float,
+                                device=device),
+             'device': device}
 
     def calculate_response(self, x, xd, object_mesh_ids, object_indicator):
         """
@@ -381,7 +387,7 @@ class BaseFabricRepulsion():
         self.allocated_data['object_mesh'] = object_mesh_ids
         self.allocated_data['object_indicator'] = object_indicator
         # Launch the collision response kernel
-        (signed_distance, base_acceleration, metric) =\
+        (signed_distance, base_acceleration, metric) = \
             CollisionResponse.apply(x.reshape(batch_size, num_points, 3),
                                     xd.reshape(batch_size, num_points, 3),
                                     self.allocated_data)
@@ -391,7 +397,7 @@ class BaseFabricRepulsion():
             self._signed_distance.copy_(signed_distance)
 
         # Set the base metric response equal to the returned metric
-        metric_norms = torch.linalg.norm(metric, dim=(1,2)).unsqueeze(1).unsqueeze(2)
+        metric_norms = torch.linalg.norm(metric, dim=(1, 2)).unsqueeze(1).unsqueeze(2)
 
         # NOrmalize the metric in a numerically robust way
         eps = 1e-6
@@ -399,13 +405,13 @@ class BaseFabricRepulsion():
             self._base_metric = (metric / (metric_norms + eps))
         else:
             self._base_metric.copy_(metric / (metric_norms + eps))
-        
+
         # Normalize the acceleration to get a direction of unit magnitude
         if self._accel_dir is None:
             self._accel_dir = torch.nn.functional.normalize(base_acceleration, dim=-1)
         else:
             self._accel_dir.copy_(torch.nn.functional.normalize(base_acceleration, dim=-1))
-    
+
         # Report collision detection. True if any negative distance is found across the entire
         # robot body
         _in_collision, _ = (self._signed_distance < 0.).max(dim=-1)
@@ -433,11 +439,13 @@ class BaseFabricRepulsion():
     @property
     def num_points(self):
         return self._num_points
-            
+
+
 class BodySphereRepulsion(BaseFabricTerm):
     """
     Implements fabric repulsion term between body spheres and environment.
     """
+
     def __init__(self, is_forcing_policy, params, batch_size, sphere_radius,
                  collision_matrix, device, graph_capturable):
         """
@@ -459,7 +467,6 @@ class BodySphereRepulsion(BaseFabricTerm):
         self.indicesy = torch.tensor([i * 3 + 1 for i in range(0, num_points)], device=self.device)
         self.indicesz = torch.tensor([i * 3 + 2 for i in range(0, num_points)], device=self.device)
 
-
         self.expanded_dist = None
 
     def metric_eval(self, x, xd, features):
@@ -475,12 +482,12 @@ class BodySphereRepulsion(BaseFabricTerm):
             self.metric = torch.zeros(x.shape[0], x.shape[1], x.shape[1], requires_grad=False,
                                       device=self.device)
             self.force = torch.zeros(x.shape[0], x.shape[1], requires_grad=False,
-                                      device=self.device)
+                                     device=self.device)
             self.expanded_dist = torch.zeros(self.batch_size, 3 * features.num_points, device=self.device)
 
         if self.expanded_dist.ndim == 3:
             self.expanded_dist = self.expanded_dist.squeeze(2)
-        
+
         if self.graph_capturable:
             self.metric.zero_().detach_()
             self.force.zero_().detach_()
@@ -492,7 +499,7 @@ class BodySphereRepulsion(BaseFabricTerm):
 
         if features is not None:
             unsigned_dist = torch.clamp(features.signed_distance, min=self.params['rescaled_min_dist'])
-            #self.expanded_dist = torch.zeros(self.batch_size, 3 * features.num_points, device=self.device)
+            # self.expanded_dist = torch.zeros(self.batch_size, 3 * features.num_points, device=self.device)
             self.expanded_dist[:, self.indicesx] = unsigned_dist
             self.expanded_dist[:, self.indicesy] = unsigned_dist
             self.expanded_dist[:, self.indicesz] = unsigned_dist
@@ -501,18 +508,18 @@ class BodySphereRepulsion(BaseFabricTerm):
             if self.is_forcing_policy:
                 # Provide additional scaling for forcing fabric term on metric
                 if self.graph_capturable:
-                    self.metric.copy_((self.params['forcing_metric_scalar'] / self.expanded_dist**2) *\
-                                  features.base_metric)
+                    self.metric.copy_((self.params['forcing_metric_scalar'] / self.expanded_dist ** 2) * \
+                                      features.base_metric)
                 else:
-                    self.metric = (self.params['forcing_metric_scalar'] / self.expanded_dist**2) *\
-                                   features.base_metric
+                    self.metric = (self.params['forcing_metric_scalar'] / self.expanded_dist ** 2) * \
+                                  features.base_metric
             else:
                 # Provide additional scaling for geometric fabric term on metric
                 if self.graph_capturable:
-                    self.metric.copy_((self.params['geom_metric_scalar'] / self.expanded_dist**2) *\
-                                  features.base_metric)
+                    self.metric.copy_((self.params['geom_metric_scalar'] / self.expanded_dist ** 2) * \
+                                      features.base_metric)
                 else:
-                    self.metric = (self.params['geom_metric_scalar'] / self.expanded_dist**2) *\
+                    self.metric = (self.params['geom_metric_scalar'] / self.expanded_dist ** 2) * \
                                   features.base_metric
 
     def force_eval(self, x, xd, features):
@@ -528,7 +535,7 @@ class BodySphereRepulsion(BaseFabricTerm):
         # set acceleration to zeros.
         if features is None:
             xdd = torch.zeros(x.shape, device=self.device)
-        else: 
+        else:
             # Extract acceleration direction and reshape into acceleration of shape
             # in this concatenated space.
             accel_dir = features.accel_dir.reshape(self.batch_size,
@@ -536,18 +543,17 @@ class BodySphereRepulsion(BaseFabricTerm):
 
             if self.is_forcing_policy:
                 # Scale the acceleration by some positive value and add damping
-                xdd = -self.params['constant_accel'] * accel_dir -\
+                xdd = -self.params['constant_accel'] * accel_dir - \
                       self.params['damping_gain'] * xd
             else:
                 # Scale the acceleration by some positive value and the inner product of
                 # velocity to create a geometry
                 xdd_not_hd2 = -self.params['constant_accel_geom'] * accel_dir
-                vel_squared = torch.sum(xd*xd, dim=1).unsqueeze(1)
+                vel_squared = torch.sum(xd * xd, dim=1).unsqueeze(1)
                 xdd = vel_squared * xdd_not_hd2
-        
+
         # Convert to force.
         if self.graph_capturable:
             self.force.copy_(-torch.bmm(self.metric, xdd.unsqueeze(2)).squeeze(2))
         else:
             self.force = -torch.bmm(self.metric, xdd.unsqueeze(2)).squeeze(2)
-

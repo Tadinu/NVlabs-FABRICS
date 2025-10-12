@@ -1,5 +1,5 @@
 # Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.                          
-                                                                                                     
+
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual                           
 # property and proprietary rights in and to this material, related                                   
 # documentation and any modifications thereto. Any use, reproduction,                                
@@ -12,7 +12,10 @@ Implements a taskmap container that holds the task map, and various fabric and e
 """
 
 import torch
-import time
+
+# fabrics
+from ..fabric_terms.fabric_term import BaseFabricTerm
+
 
 class TaskmapContainer():
     def __init__(self, taskmap_name, taskmap, graph_capturable):
@@ -27,7 +30,7 @@ class TaskmapContainer():
         # Dictionaries of fabrics and energies
         self._fabrics = dict()
         self._energies = dict()
-        #self.stream = torch.cuda.Stream(device='cuda')
+        # self.stream = torch.cuda.Stream(device='cuda')
 
         # Hold onto the taskspace evals
         self._x = None
@@ -43,7 +46,7 @@ class TaskmapContainer():
         self.energy_scalars = None
 
     # TODO: need to figure out how to use streams properly once supported by Warp.
-    #def get_stream(self):
+    # def get_stream(self):
     #    return self.stream
 
     @property
@@ -69,7 +72,7 @@ class TaskmapContainer():
         return self._fabrics[fabric_name]
 
     def add_fabric(self, fabric_name, fabric):
-        self._fabrics[fabric_name] =  fabric
+        self._fabrics[fabric_name] = fabric
 
     def add_energy(self, energy_name, energy):
         self._energies[energy_name] = energy
@@ -80,9 +83,9 @@ class TaskmapContainer():
 
     def eval_fabrics(self, x, xd, fabric_features_dict, external_force):
         # List of metrics and forces associated with this leaf space.
-        #M_leaf =  []
-        #potential_force_lhs_leaf =  []
-        #geometric_force_lhs_leaf =  []
+        # M_leaf =  []
+        # potential_force_lhs_leaf =  []
+        # geometric_force_lhs_leaf =  []
 
         # Allocate memory
         if self.M_leaf is None:
@@ -99,16 +102,16 @@ class TaskmapContainer():
             self.geometric_force_lhs_leaf.zero_().detach_()
         else:
             self.M_leaf = torch.zeros_like(self.M_leaf)
-            self.potential_force_lhs_leaf =\
+            self.potential_force_lhs_leaf = \
                 torch.zeros_like(self.potential_force_lhs_leaf)
-            self.geometric_force_lhs_leaf =\
+            self.geometric_force_lhs_leaf = \
                 torch.zeros_like(self.geometric_force_lhs_leaf)
 
         # Cycle through fabrics in this task space, generating their responses.
         for fabric_name, fabric in self._fabrics.items():
             # Evaluate fabric with associated features.
             M_term, force_term = fabric(x, xd, fabric_features_dict[fabric_name])
-            #M_leaf.append(M_term)
+            # M_leaf.append(M_term)
 
             if self.graph_capturable:
                 self.M_leaf.add_(M_term)
@@ -116,52 +119,52 @@ class TaskmapContainer():
                 self.M_leaf = self.M_leaf + M_term
 
             if fabric.is_forcing_policy:
-                #potential_force_lhs_leaf.append(force_term)
+                # potential_force_lhs_leaf.append(force_term)
                 if self.graph_capturable:
                     self.potential_force_lhs_leaf.add_(force_term)
                 else:
-                    self.potential_force_lhs_leaf =\
+                    self.potential_force_lhs_leaf = \
                         self.potential_force_lhs_leaf + force_term
             else:
-                #geometric_force_lhs_leaf.append(force_term)
+                # geometric_force_lhs_leaf.append(force_term)
                 if self.graph_capturable:
                     self.geometric_force_lhs_leaf.add_(force_term)
                 else:
-                    self.geometric_force_lhs_leaf =\
+                    self.geometric_force_lhs_leaf = \
                         self.geometric_force_lhs_leaf + force_term
-        
+
         # Sum up the metrics
-        #M = None
-        #if len(M_leaf) > 0:
+        # M = None
+        # if len(M_leaf) > 0:
         #    M = torch.sum(torch.stack(M_leaf, 3), 3)
 
         # Sum up potential force
         potential_force_lhs = None
         geometric_force_lhs = None
-        
+
         # Add external force to potential force
         if external_force is not None:
-            #potential_force_lhs_leaf.append(external_force)
+            # potential_force_lhs_leaf.append(external_force)
             if self.graph_capturable:
                 self.potential_force_lhs_leaf.add_(external_force)
             else:
-                self.potential_force_lhs_leaf =\
+                self.potential_force_lhs_leaf = \
                     self.potential_force_lhs_leaf + external_force
 
-        #if len(potential_force_lhs_leaf) > 0:
+        # if len(potential_force_lhs_leaf) > 0:
         #    potential_force_lhs = torch.sum(torch.stack(potential_force_lhs_leaf, 2), 2)
 
         # Sum up geometric force
-        #if len(geometric_force_lhs_leaf) > 0:
+        # if len(geometric_force_lhs_leaf) > 0:
         #    geometric_force_lhs = torch.sum(torch.stack(geometric_force_lhs_leaf, 2), 2)
 
-        #return (M, potential_force_lhs, geometric_force_lhs)
+        # return (M, potential_force_lhs, geometric_force_lhs)
         return (self.M_leaf, self.potential_force_lhs_leaf, self.geometric_force_lhs_leaf)
 
     def eval_energies(self, x, xd):
-        #M_leaf = []
-        #force_lhs_leaf = []
-        #energy_scalars = []
+        # M_leaf = []
+        # force_lhs_leaf = []
+        # energy_scalars = []
 
         if self.M_energy_leaf is None:
             batch_size = x.shape[0]
@@ -183,9 +186,9 @@ class TaskmapContainer():
         # Cycle through fabrics in this task space, generating their responses.
         for energy_name, energy in self._energies.items():
             M_term, force_term, energy_scalars_term = energy(x, xd)
-            #M_leaf.append(M_term)
-            #force_lhs_leaf.append(force_term)
-            #energy_scalars.append(energy_scalars_term)
+            # M_leaf.append(M_term)
+            # force_lhs_leaf.append(force_term)
+            # energy_scalars.append(energy_scalars_term)
             if self.graph_capturable:
                 self.M_energy_leaf.add_(M_term)
                 self.energy_force_lfs_leaf.add_(force_term)
@@ -194,15 +197,15 @@ class TaskmapContainer():
                 self.M_energy_leaf = self.M_energy_leaf + M_term
                 self.energy_force_lfs_leaf = self.energy_force_lfs_leaf + force_term
                 self.energy_scalars = self.energy_scalars + energy_scalars_term
-        
-        # Sum up the metrics
-#        M = None
-#        force_lhs = None
-#        energy = None
-#        if len(M_leaf) > 0:
-#            M = torch.sum(torch.stack(M_leaf, 3), 3)
-#            force_lhs = torch.sum(torch.stack(force_lhs_leaf, 2), 2)
-#            energy = torch.sum(torch.stack(energy_scalars, 1), 1)
 
-        #return (M, force_lhs, energy)
+        # Sum up the metrics
+        #        M = None
+        #        force_lhs = None
+        #        energy = None
+        #        if len(M_leaf) > 0:
+        #            M = torch.sum(torch.stack(M_leaf, 3), 3)
+        #            force_lhs = torch.sum(torch.stack(force_lhs_leaf, 2), 2)
+        #            energy = torch.sum(torch.stack(energy_scalars, 1), 1)
+
+        # return (M, force_lhs, energy)
         return (self.M_energy_leaf, self.energy_force_lfs_leaf, self.energy_scalars)

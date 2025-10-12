@@ -24,6 +24,7 @@
 */.ipynb_checkpoints/*
 .DS_Store
 .cache/*
+examples/.cache/*
 .thumbs/*
 __pycache__/*
 

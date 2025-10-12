@@ -1,5 +1,5 @@
 # Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.                          
-                                                                                                     
+
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual                           
 # property and proprietary rights in and to this material, related                                   
 # documentation and any modifications thereto. Any use, reproduction,                                
@@ -15,10 +15,12 @@ import time
 
 from fabrics_sim.fabric_terms.fabric_term import BaseFabricTerm
 
+
 class JointLimitRepulsion(BaseFabricTerm):
     """
     Implements a fabric joint limit repulsion term.
     """
+
     def __init__(self, is_forcing_policy, params, device, graph_capturable):
         """
         Constructor.
@@ -29,14 +31,14 @@ class JointLimitRepulsion(BaseFabricTerm):
         super().__init__(is_forcing_policy, params, device, graph_capturable=graph_capturable)
 
         self._kEpsilon = 1e-6
-        self.params['metric_scalar'] = torch.tensor(self.params['metric_scalar'], device=device)
-        self.params['max_metric'] = torch.tensor(self.params['max_metric'], device=device)
+        self.params['metric_scalar'] = torch.as_tensor(self.params['metric_scalar'], device=device)
+        self.params['max_metric'] = torch.as_tensor(self.params['max_metric'], device=device)
         self._min_x_delta = self.compute_min_x_delta()
 
         self.ones_like_x = None
 
     def compute_min_x_delta(self):
-        return torch.tensor((self.params['metric_scalar'] / self.params['max_metric'])**0.5,
+        return torch.tensor((self.params['metric_scalar'] / self.params['max_metric']) ** 0.5,
                             device=self.device)
 
     def metric_eval(self, x, xd, features):
@@ -52,9 +54,9 @@ class JointLimitRepulsion(BaseFabricTerm):
             self.metric = torch.zeros(x.shape[0], x.shape[1], x.shape[1], requires_grad=False,
                                       device=self.device)
             self.force = torch.zeros(x.shape[0], x.shape[1], requires_grad=False,
-                                      device=self.device)
+                                     device=self.device)
             self.ones_like_x = torch.ones_like(x)
-        
+
         if self.graph_capturable:
             self.metric.zero_().detach_()
             self.force.zero_().detach_()
@@ -73,7 +75,7 @@ class JointLimitRepulsion(BaseFabricTerm):
             if self.graph_capturable:
                 self.metric.copy_(torch.diag_embed(activation_trigger * self.params['metric_scalar'] / x_delta ** 2))
             else:
-                self.metric =\
+                self.metric = \
                     torch.diag_embed(activation_trigger * self.params['metric_scalar'] / x_delta ** 2)
         else:
             if self.graph_capturable:
@@ -92,16 +94,15 @@ class JointLimitRepulsion(BaseFabricTerm):
         """
 
         if not self.is_forcing_policy:
-            vel_squared = torch.sum(xd*xd, dim=1).unsqueeze(1)
+            vel_squared = torch.sum(xd * xd, dim=1).unsqueeze(1)
             xdd = vel_squared * self.params['soft_relu_gain'] * self.ones_like_x
         else:
             # If velocity is negative (motion towards limit), then engage damping
             damping_gain = (xd <= 0) * self.params['damping_gain']
-            xdd = self.params['soft_relu_gain'] * self.ones_like_x - damping_gain  * xd
-        
+            xdd = self.params['soft_relu_gain'] * self.ones_like_x - damping_gain * xd
+
         # Convert to force.
         if self.graph_capturable:
             self.force.copy_(-torch.bmm(self.metric, xdd.unsqueeze(2)).squeeze(2))
         else:
             self.force = -torch.bmm(self.metric, xdd.unsqueeze(2)).squeeze(2)
-

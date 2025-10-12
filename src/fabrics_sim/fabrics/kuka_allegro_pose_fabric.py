@@ -24,12 +24,14 @@ from fabrics_sim.utils.path_utils import get_robot_urdf_path
 from fabrics_sim.utils.rotation_utils import euler_to_matrix, matrix_to_euler
 from fabrics_sim.utils.rotation_utils import quaternion_to_matrix, matrix_to_quaternion
 
+
 class KukaAllegroPoseFabric(BaseFabric):
     """
     Creates a fabric for the kuka-allegro that opens up a pose action space for the palm
     and PCA'ed action space for the hand. Includes self-collision, env collision avoidance,
     joint limiting, accel/jerk limiting, speed control, redundancy resolution.
     """
+
     def __init__(self, batch_size, device, timestep, graph_capturable=True):
         """
         Constructor. Specifies parameter file and constructs the fabric.
@@ -45,13 +47,13 @@ class KukaAllegroPoseFabric(BaseFabric):
         robot_dir_name = "kuka_allegro"
         robot_name = "kuka_allegro"
         self.urdf_path = get_robot_urdf_path(robot_dir_name, robot_name)
-        
+
         self.load_robot(robot_dir_name, robot_name, batch_size)
-        
+
         # Going to set a default config for the cspace attractor that gets
         # used until an actual cspace command comes in
-        default_config =\
-            torch.tensor([-0.85, -0.50,  0.76,  1.25, -1.76, 0.90, 0.64,
+        default_config = \
+            torch.tensor([-0.85, -0.50, 0.76, 1.25, -1.76, 0.90, 0.64,
                           0.0, 0.75, 0.75, 0.75,
                           0.0, 0.75, 0.75, 0.75,
                           0.0, 0.75, 0.75, 0.75,
@@ -63,11 +65,11 @@ class KukaAllegroPoseFabric(BaseFabric):
 
         # Construct the fabric.
         self.construct_fabric()
-        
+
         # Allocate palm pose target tensor (b x (3 + 9))
         # 3 dim for origin target, 12 dim for stacked 3x3 transform target (rx', ry', rx')
         self._palm_pose_target = torch.zeros(batch_size, 12, device=device)
-        
+
         # Storing the target expressed in the taskspace actually used
         self._native_palm_pose_target = None
 
@@ -77,13 +79,8 @@ class KukaAllegroPoseFabric(BaseFabric):
         """
 
         # Create upper joint limiting
-        # Pulling lower joint limits from urdf
-        joints = self.urdfpy_robot.joints # this is a list
-        upper_joint_limits = []
-        for i in range(len(joints)):
-            # NOTE: We are only supporting revolute joints right now.
-            if joints[i].joint_type == 'revolute':
-                upper_joint_limits.append(joints[i].limit.upper)
+        upper_joint_limits = [joint.upper_limit for joint in self.joints_meta]
+
         # Create upper joint limiting
         # Create taskmap and its container.
         taskmap_name = "upper_joint_limit"
@@ -96,13 +93,9 @@ class KukaAllegroPoseFabric(BaseFabric):
         fabric = JointLimitRepulsion(is_forcing, self.fabric_params['joint_limit_repulsion'],
                                      self.device, graph_capturable=self.graph_capturable)
         self.add_fabric(taskmap_name, fabric_name, fabric)
-        
+
         # Create lower joint limiting
-        # Pulling lower joint limits from urdf
-        lower_joint_limits = []
-        for i in range(len(joints)):
-            if joints[i].joint_type == 'revolute':
-                lower_joint_limits.append(joints[i].limit.lower)
+        lower_joint_limits = [joint.lower_limit for joint in self.joints_meta]
 
         # Create taskmap and its container.
         taskmap_name = "lower_joint_limit"
@@ -115,7 +108,7 @@ class KukaAllegroPoseFabric(BaseFabric):
         fabric = JointLimitRepulsion(is_forcing, self.fabric_params['joint_limit_repulsion'],
                                      self.device, graph_capturable=self.graph_capturable)
         self.add_fabric(taskmap_name, fabric_name, fabric)
-    
+
     def add_cspace_attractor(self, is_forcing):
         """
         Add a cspace attractors to the fabric.
@@ -142,28 +135,28 @@ class KukaAllegroPoseFabric(BaseFabric):
 
         # Add it to container list in the root space
         self.add_fabric(taskmap_name, fabric_name, fabric)
-    
+
     def add_hand_fabric(self):
         # TODO: this will make the PCA space fabric and place an attractor there
-        pca_matrix = torch.tensor([[-3.8872e-02,  3.7917e-01,  4.4703e-01,  7.1016e-03,  2.1159e-03,
-                                     3.2014e-01,  4.4660e-01,  5.2108e-02,  5.6869e-05,  2.9845e-01,
-                                     3.8575e-01,  7.5774e-03, -1.4790e-02,  9.8163e-02,  4.3551e-02,
-                                     3.1699e-01],
-                                   [-5.1148e-02, -1.3007e-01,  5.7727e-02,  5.7914e-01,  1.0156e-02,
-                                    -1.8469e-01,  5.3809e-02,  5.4888e-01,  1.3351e-04, -1.7747e-01,
-                                     2.7809e-02,  4.8187e-01,  2.9753e-02,  2.6149e-02,  6.6994e-02,
-                                     1.8117e-01],
-                                   [-5.7137e-02, -3.4707e-01,  3.3365e-01, -1.8029e-01, -4.3560e-02,
-                                    -4.7666e-01,  3.2517e-01, -1.5208e-01, -5.9691e-05, -4.5790e-01,
-                                     3.6536e-01, -1.3916e-01,  2.3925e-03,  3.7238e-02, -1.0124e-01,
+        pca_matrix = torch.tensor([[-3.8872e-02, 3.7917e-01, 4.4703e-01, 7.1016e-03, 2.1159e-03,
+                                    3.2014e-01, 4.4660e-01, 5.2108e-02, 5.6869e-05, 2.9845e-01,
+                                    3.8575e-01, 7.5774e-03, -1.4790e-02, 9.8163e-02, 4.3551e-02,
+                                    3.1699e-01],
+                                   [-5.1148e-02, -1.3007e-01, 5.7727e-02, 5.7914e-01, 1.0156e-02,
+                                    -1.8469e-01, 5.3809e-02, 5.4888e-01, 1.3351e-04, -1.7747e-01,
+                                    2.7809e-02, 4.8187e-01, 2.9753e-02, 2.6149e-02, 6.6994e-02,
+                                    1.8117e-01],
+                                   [-5.7137e-02, -3.4707e-01, 3.3365e-01, -1.8029e-01, -4.3560e-02,
+                                    -4.7666e-01, 3.2517e-01, -1.5208e-01, -5.9691e-05, -4.5790e-01,
+                                    3.6536e-01, -1.3916e-01, 2.3925e-03, 3.7238e-02, -1.0124e-01,
                                     -1.7442e-02],
-                                   [ 2.2795e-02, -3.4090e-02,  3.4366e-02, -2.6531e-02,  2.3471e-02,
-                                     4.6123e-02,  9.8059e-02, -1.2619e-03, -1.6452e-04, -1.3741e-02,
-                                     1.3813e-01,  2.8677e-02,  2.2661e-01, -5.9911e-01,  7.0257e-01,
+                                   [2.2795e-02, -3.4090e-02, 3.4366e-02, -2.6531e-02, 2.3471e-02,
+                                    4.6123e-02, 9.8059e-02, -1.2619e-03, -1.6452e-04, -1.3741e-02,
+                                    1.3813e-01, 2.8677e-02, 2.2661e-01, -5.9911e-01, 7.0257e-01,
                                     -2.4525e-01],
-                                   [-4.4911e-02, -4.7156e-01,  9.3124e-02,  2.3135e-01, -2.4607e-03,
-                                     9.5564e-02,  1.2470e-01,  3.6613e-02,  1.3821e-04,  4.6072e-01,
-                                     9.9315e-02, -8.1080e-02, -4.7617e-01, -2.7734e-01, -2.3989e-01,
+                                   [-4.4911e-02, -4.7156e-01, 9.3124e-02, 2.3135e-01, -2.4607e-03,
+                                    9.5564e-02, 1.2470e-01, 3.6613e-02, 1.3821e-04, 4.6072e-01,
+                                    9.9315e-02, -8.1080e-02, -4.7617e-01, -2.7734e-01, -2.3989e-01,
                                     -3.1222e-01]], device=self.device)
 
         self._pca_matrix = torch.clone(pca_matrix.detach())
@@ -182,10 +175,10 @@ class KukaAllegroPoseFabric(BaseFabric):
         is_forcing = True
         fabric = Attractor(is_forcing, self.fabric_params['hand_attractor'],
                            self.device, graph_capturable=self.graph_capturable)
-        
+
         # Add it to container list
         self.add_fabric(taskmap_name, fabric_name, fabric)
-    
+
     def add_palm_points_attractor(self):
         """
         Creates a taskmap of 3 noncollinear points on the gripper and constructs
@@ -202,7 +195,7 @@ class KukaAllegroPoseFabric(BaseFabric):
         taskmap = RobotFrameOriginsTaskMap(self.urdf_path, control_point_frames,
                                            self.batch_size, self.device)
         self.add_taskmap(taskmap_name, taskmap, graph_capturable=self.graph_capturable)
-            
+
         # Create and add geometric attractor
         fabric_name = "palm_attractor"
         is_forcing = True
@@ -211,7 +204,7 @@ class KukaAllegroPoseFabric(BaseFabric):
 
         # Add it to container list
         self.add_fabric(taskmap_name, fabric_name, fabric)
-    
+
     def add_body_repulsion(self):
         """
         Creates body spheres and repulsion between body spheres (self-collision) and also between
@@ -222,13 +215,13 @@ class KukaAllegroPoseFabric(BaseFabric):
 
         # List of sphere radii, one for each frame origin
         self.collision_sphere_radii = self.fabric_params['body_repulsion']['collision_sphere_radii']
-        
-        assert(len(collision_sphere_frames) == len(self.collision_sphere_radii)),\
-                "length of link names does not equal length of radii"
+
+        assert (len(collision_sphere_frames) == len(self.collision_sphere_radii)), \
+            "length of link names does not equal length of radii"
 
         # Declare which body spheres need to avoid collision
         collision_sphere_pairs = self.fabric_params['body_repulsion']['collision_sphere_pairs']
-        
+
         # Calculate the body collision matrix
         collision_matrix = torch.zeros(len(collision_sphere_frames), len(collision_sphere_frames), dtype=int,
                                        device=self.device)
@@ -263,28 +256,28 @@ class KukaAllegroPoseFabric(BaseFabric):
         sphere_radius = torch.tensor(self.collision_sphere_radii, device=self.device)
         sphere_radius = sphere_radius.repeat(self.batch_size, 1)
         fabric = BodySphereRepulsion(is_forcing, self.fabric_params['body_repulsion'],
-            self.batch_size, sphere_radius, collision_matrix, self.device,
-            graph_capturable=self.graph_capturable)
+                                     self.batch_size, sphere_radius, collision_matrix, self.device,
+                                     graph_capturable=self.graph_capturable)
 
         # Add it to container list
         self.add_fabric(taskmap_name, fabric_name, fabric)
 
         # Add geometric body repulsion
         fabric_geom = BodySphereRepulsion(False, self.fabric_params['body_repulsion'],
-            self.batch_size, sphere_radius, collision_matrix, self.device,
-            graph_capturable=self.graph_capturable)
-        
+                                          self.batch_size, sphere_radius, collision_matrix, self.device,
+                                          graph_capturable=self.graph_capturable)
+
         # Add it to container list
         self.add_fabric(taskmap_name, "geom_repulsion", fabric_geom)
 
         # Create object that constructs base response and signed distance
-        self.base_fabric_repulsion =\
+        self.base_fabric_repulsion = \
             BaseFabricRepulsion(self.fabric_params['body_repulsion'],
                                 self.batch_size,
                                 sphere_radius,
                                 collision_matrix,
                                 self.device)
-        
+
     def add_cspace_energy(self):
         """
         Add a Euclidean cspace energy to the fabric.
@@ -292,7 +285,7 @@ class KukaAllegroPoseFabric(BaseFabric):
         # Add gripper energy.
         taskmap_name = "identity"
         energy_name = "euclidean"
-        self.add_energy(taskmap_name, energy_name, EuclideanEnergy(self.batch_size, self._num_joints, self.device))
+        self.add_energy(taskmap_name, energy_name, EuclideanEnergy(self.batch_size, self.num_joints, self.device))
 
     def construct_fabric(self):
         """
@@ -307,7 +300,7 @@ class KukaAllegroPoseFabric(BaseFabric):
 
         # Add hand attractor
         self.add_hand_fabric()
-        
+
         # Add multi-point gripper attractor
         self.add_palm_points_attractor()
 
@@ -316,7 +309,7 @@ class KukaAllegroPoseFabric(BaseFabric):
 
         # Add energy
         self.add_cspace_energy()
-    
+
     def convert_transform_to_points(self):
         """
         Converts gripper pose target to collection of target points in
@@ -333,22 +326,22 @@ class KukaAllegroPoseFabric(BaseFabric):
 
         x_point = torch.zeros(self.batch_size, 4, device=self.device)
         x_neg_point = torch.zeros(self.batch_size, 4, device=self.device)
-        x_point[:,3] = 1.
-        x_neg_point[:,3] = 1.
+        x_point[:, 3] = 1.
+        x_neg_point[:, 3] = 1.
         x_point[:, 0] = 0.25
         x_neg_point[:, 0] = -0.25
 
         y_point = torch.zeros(self.batch_size, 4, device=self.device)
         y_neg_point = torch.zeros(self.batch_size, 4, device=self.device)
-        y_point[:,3] = 1.
-        y_neg_point[:,3] = 1.
+        y_point[:, 3] = 1.
+        y_neg_point[:, 3] = 1.
         y_point[:, 1] = 0.25
         y_neg_point[:, 1] = -0.25
 
         z_point = torch.zeros(self.batch_size, 4, device=self.device)
         z_neg_point = torch.zeros(self.batch_size, 4, device=self.device)
-        z_point[:,3] = 1.
-        z_neg_point[:,3] = 1.
+        z_point[:, 3] = 1.
+        z_neg_point[:, 3] = 1.
         z_point[:, 2] = 0.25
         z_neg_point[:, 2] = -0.25
 
@@ -361,7 +354,7 @@ class KukaAllegroPoseFabric(BaseFabric):
         # x_axis
         palm_targets[:, 3:6] = torch.bmm(palm_transform, x_point.unsqueeze(2)).squeeze(2)[:, :3]
         palm_targets[:, 6:9] = torch.bmm(palm_transform, x_neg_point.unsqueeze(2)).squeeze(2)[:, :3]
-        
+
         # y_axis
         palm_targets[:, 9:12] = torch.bmm(palm_transform, y_point.unsqueeze(2)).squeeze(2)[:, :3]
         palm_targets[:, 12:15] = torch.bmm(palm_transform, y_neg_point.unsqueeze(2)).squeeze(2)[:, :3]
@@ -371,7 +364,7 @@ class KukaAllegroPoseFabric(BaseFabric):
         palm_targets[:, 18:21] = torch.bmm(palm_transform, z_neg_point.unsqueeze(2)).squeeze(2)[:, :3]
 
         return palm_targets
-    
+
     def get_sphere_radii(self):
         """
         Returns the radii for the body collision spheres.
@@ -379,7 +372,7 @@ class KukaAllegroPoseFabric(BaseFabric):
         :return collision_sphere_radii: list of floats containing the radii
         """
         return self.collision_sphere_radii
-    
+
     @property
     def collision_status(self):
         """
@@ -419,13 +412,12 @@ class KukaAllegroPoseFabric(BaseFabric):
         rotation_matrix[:, :, 1] = y_axis
         rotation_matrix[:, :, 2] = z_axis
 
-       
         orientation = None
         if orientation_convention == "euler_zyx":
-            #orientation = transforms.matrix_to_euler_angles(rotation_matrix, "ZYX")
+            # orientation = transforms.matrix_to_euler_angles(rotation_matrix, "ZYX")
             orientation = matrix_to_euler(rotation_matrix)
         elif orientation_convention == "quaternion":
-            #orientation = transforms.matrix_to_quaternion(rotation_matrix)[:, [1, 2, 3, 0]]
+            # orientation = transforms.matrix_to_quaternion(rotation_matrix)[:, [1, 2, 3, 0]]
             orientation = matrix_to_quaternion(rotation_matrix)[:, [1, 2, 3, 0]]
         else:
             raise ValueError('orientation_convention parameter must be either "euler_zyx" or "quaternion"')
@@ -466,45 +458,45 @@ class KukaAllegroPoseFabric(BaseFabric):
         """
         self.fabrics_features["pca_hand"]["hand_attractor"] = hand_target
         self.fabrics_features["identity"]["cspace_attractor"] = self.default_config
-        
+
         # Insert translational targets into class tensor for holding the target pose
         self._palm_pose_target[:, :3] = palm_pose_target[:, :3]
-        
+
         # First convert palm target orientation from specified convention to rotation matrix
         if orientation_convention == "euler_zyx":
-            assert(palm_pose_target.shape[1] == 6),\
+            assert (palm_pose_target.shape[1] == 6), \
                 "Pose target must be of dimensions (batch_size x 6) with Euler convention"
-            self._palm_pose_target[:, 3:] =\
+            self._palm_pose_target[:, 3:] = \
                 torch.transpose(euler_to_matrix(
                     palm_pose_target[:, 3:]), 1, 2).reshape(self.batch_size, 9)
-                #torch.transpose(transforms.euler_angles_to_matrix(
-                #    palm_pose_target[:, 3:], "ZYX"), 1, 2).reshape(self.batch_size, 9)
+            # torch.transpose(transforms.euler_angles_to_matrix(
+            #    palm_pose_target[:, 3:], "ZYX"), 1, 2).reshape(self.batch_size, 9)
         elif orientation_convention == "quaternion":
-            assert(palm_pose_target.shape[1] == 7),\
+            assert (palm_pose_target.shape[1] == 7), \
                 "Pose target must be of dimensions (batch_size x 7) with quaternion convention"
-            self._palm_pose_target[:, 3:] =\
-                torch.transpose(quaternion_to_matrix( # transforms.quaternion_to_matrix(
+            self._palm_pose_target[:, 3:] = \
+                torch.transpose(quaternion_to_matrix(  # transforms.quaternion_to_matrix(
                     palm_pose_target[:, [6, 3, 4, 5]]), 1, 2).reshape(self.batch_size, 9)
         else:
             raise ValueError('orientation_convention parameter must be either "euler_zyx" or "quaternion"')
 
         # If multi-point attractor is being used, then convert pose target to targets in the right space
         palm_pose_target = self.convert_transform_to_points()
-        
+
         if self._native_palm_pose_target is None:
             self._native_palm_pose_target = torch.clone(palm_pose_target)
         else:
             self._native_palm_pose_target.copy_(palm_pose_target)
-        
+
         # Pass the gripper target to the gripper attractors and the damping target
         try:
-            self.fabrics_features["palm"]["palm_attractor"] =\
+            self.fabrics_features["palm"]["palm_attractor"] = \
                 self._native_palm_pose_target
-            self.get_fabric_term("palm", "palm_attractor").damping_position =\
+            self.get_fabric_term("palm", "palm_attractor").damping_position = \
                 self._native_palm_pose_target
         except:
             raise ValueError('No task map `palm` or `palm_attractor`')
-        
+
         # Calculate current location of body sphere origins and their velocity
         body_point_pos, jac = self.get_taskmap("body_points")(batched_cspace_position, None)
         body_point_vel = torch.bmm(jac, batched_cspace_velocity.unsqueeze(2)).squeeze(2)
@@ -519,11 +511,10 @@ class KukaAllegroPoseFabric(BaseFabric):
 
         # Pass the collision response data into both the forcing and geometric collision
         # avoidance fabric terms.
-        self.fabrics_features["body_points"]["repulsion"] =\
+        self.fabrics_features["body_points"]["repulsion"] = \
             self.base_fabric_repulsion
-        self.fabrics_features["body_points"]["geom_repulsion"] =\
+        self.fabrics_features["body_points"]["geom_repulsion"] = \
             self.base_fabric_repulsion
 
         if cspace_damping_gain is not None:
             self.fabric_params['cspace_damping']['gain'] = cspace_damping_gain
-

@@ -11,6 +11,7 @@
 import torch
 import numpy as np
 
+import newton
 import warp as wp
 from fabrics_sim.prod.import_urdf import parse_urdf_annotated as parse_urdf
 from fabrics_sim.prod.cuda_stream_utils import setup_torch_to_use_warp_streams
@@ -72,7 +73,7 @@ def make_ancestory_matrix_from_paths(link_paths_numpy, device):
     for j in range(num_links):
         link_path = link_paths_numpy[j]
         for i in link_path[:-1]:
-            link_ancestory_matrix_torch[i,j] = 1 
+            link_ancestory_matrix_torch[i, j] = 1
 
     return link_ancestory_matrix
 
@@ -86,12 +87,12 @@ def paths_to_warp(paths, device):
     """
     num_links = len(paths)
     max_len = max([len(p) for p in paths])
-    torch_paths = torch.zeros(num_links, max_len+1, dtype=torch.int32, device=device)
+    torch_paths = torch.zeros(num_links, max_len + 1, dtype=torch.int32, device=device)
     for link_index in range(num_links):
         path = paths[link_index]
         torch_paths[link_index, 0] = len(path)
         for path_index in range(len(path)):
-            torch_paths[link_index, path_index+1] = path[path_index]
+            torch_paths[link_index, path_index + 1] = path[path_index]
 
     return wp.torch.from_torch(torch_paths)
 
@@ -151,6 +152,7 @@ with respect to the parent link’s frame."
 This is at zero joint angle. Then the joint value makes this shift.
 """
 
+
 @wp.kernel
 def link_transforms_kernel(
         # inputs
@@ -176,13 +178,13 @@ def link_transforms_kernel(
 
         joint_axis = local_joint_axes[link_index]
         X_pj = joint_transforms_in_parent_coords[link_index]
-        
+
         joint_type = joint_types[link_index]
-        if joint_type == wp.sim.JOINT_REVOLUTE:
+        if joint_type == newton.JointType.REVOLUTE:
             cspace_index = link2cspace[link_index]
             q = cspace_q[tid, cspace_index]
             X_jc = wp.transform(wp.vec3(), wp.quat_from_axis_angle(joint_axis, q))
-        elif joint_type == wp.sim.JOINT_FIXED:
+        elif joint_type == newton.JointType.FIXED:
             X_jc = wp.transform_identity()
 
         X_wc = X_wp * X_pj * X_jc
@@ -210,23 +212,23 @@ def link_transforms_multithreaded_kernel(
 
     path_length = link_paths[target_link_index, 0]
     for i in range(path_length):
-        link_index = link_paths[target_link_index, i+1]
+        link_index = link_paths[target_link_index, i + 1]
         joint_axis = local_joint_axes[link_index]
         X_pj = joint_transforms_in_parent_coords[link_index]
-        
+
         joint_type = joint_types[link_index]
-        if joint_type == wp.sim.JOINT_REVOLUTE:
+        if joint_type == newton.JointType.REVOLUTE:
             cspace_index = link2cspace[link_index]
             q = cspace_q[batch_index, cspace_index]
             X_jc = wp.transform(wp.vec3(), wp.quat_from_axis_angle(joint_axis, q))
-        elif joint_type == wp.sim.JOINT_FIXED:
+        elif joint_type == newton.JointType.FIXED:
             X_jc = wp.transform_identity()
         # TODO: Add support for prismatic joints.
-        #elif joint_type == wp.sim.JOINT_PRISMATIC:
+        # elif joint_type == newton.JointType.PRISMATIC:
         #    print("<encountered prismatic joints>")
 
         X_wc = X_wc * X_pj * X_jc
-        
+
     link_transforms[batch_index, target_link_index] = X_wc
 
 
@@ -245,7 +247,6 @@ def eval_kinematics_with_velocities_and_axes_kernel(
         batch_link_transforms: wp.array(dtype=wp.transform, ndim=2),
         batch_joint_axes: wp.array(dtype=wp.vec3, ndim=2),
         batch_link_spatial_velocities: wp.array(dtype=wp.spatial_vector, ndim=2)):
-
     batch_index = wp.tid()
 
     for link_index in range(num_links):
@@ -263,15 +264,15 @@ def eval_kinematics_with_velocities_and_axes_kernel(
 
         joint_type = joint_types[link_index]
         cspace_index = link2cspace[link_index]
-        if joint_type == wp.sim.JOINT_REVOLUTE:
+        if joint_type == newton.JointType.REVOLUTE:
             q = batch_cspace_q[batch_index, cspace_index]
             qd = batch_cspace_qd[batch_index, cspace_index]  # Used in the conditional block below.
 
             X_child2joint = wp.transform(wp.vec3(), wp.quat_from_axis_angle(local_joint_axis, q))
 
-        elif joint_type == wp.sim.JOINT_FIXED:
+        elif joint_type == newton.JointType.FIXED:
             X_child2joint = wp.transform_identity()
-        
+
         # Compute world transform of link and extract the joint axis. Note that prev_link_transform is
         # an alias for X_parent2world
         X_child2world = X_parent2world * X_joint2parent * X_child2joint
@@ -286,10 +287,11 @@ def eval_kinematics_with_velocities_and_axes_kernel(
         parent_linear_velocity = wp.spatial_bottom(parent_spatial_velocity)
         linear_velocity = parent_linear_velocity + wp.cross(parent_angular_velocity, parent_orig_to_child_orig)
 
-        if joint_type == wp.sim.JOINT_REVOLUTE:
+        if joint_type == newton.JointType.REVOLUTE:
             # If this is a revolute joint, the angular velocity of the link will update and we'll shift
             # the origin to the new joint.
-            joint_axis_in_world_coords = transform_vector(X_child2world, local_joint_axis)  # Compute joint axis in world coords.
+            joint_axis_in_world_coords = transform_vector(X_child2world,
+                                                          local_joint_axis)  # Compute joint axis in world coords.
             angular_velocity = parent_angular_velocity + qd * joint_axis_in_world_coords
 
             # Write the world coord joint axis to memory.
@@ -317,7 +319,6 @@ def eval_kinematics_with_velocities_and_axes_multithreaded_kernel(
         batch_link_transforms: wp.array(dtype=wp.transform, ndim=2),
         batch_joint_axes: wp.array(dtype=wp.vec3, ndim=2),
         batch_link_spatial_velocities: wp.array(dtype=wp.spatial_vector, ndim=2)):
-
     batch_index, target_link_index = wp.tid()
 
     parent_origin = wp.vec3()
@@ -326,22 +327,22 @@ def eval_kinematics_with_velocities_and_axes_multithreaded_kernel(
 
     path_length = link_paths[target_link_index, 0]
     for i in range(path_length):
-        link_index = link_paths[target_link_index, i+1]
+        link_index = link_paths[target_link_index, i + 1]
         cspace_index = link2cspace[link_index]
 
         local_joint_axis = local_joint_axes[link_index]
         X_joint2parent = joint_transforms_in_parent_coords[link_index]
 
         joint_type = joint_types[link_index]
-        if joint_type == wp.sim.JOINT_REVOLUTE:
+        if joint_type == newton.JointType.REVOLUTE:
             q = batch_cspace_q[batch_index, cspace_index]
             qd = batch_cspace_qd[batch_index, cspace_index]  # Used in the conditional block below.
 
             X_child2joint = wp.transform(wp.vec3(), wp.quat_from_axis_angle(local_joint_axis, q))
 
-        elif joint_type == wp.sim.JOINT_FIXED:
+        elif joint_type == newton.JointType.FIXED:
             X_child2joint = wp.transform_identity()
-        
+
         # Compute world transform of link and extract the joint axis. Note that prev_link_transform is
         # an alias for X_parent2world
         X_child2world = X_parent2world * X_joint2parent * X_child2joint
@@ -356,10 +357,11 @@ def eval_kinematics_with_velocities_and_axes_multithreaded_kernel(
         parent_linear_velocity = wp.spatial_bottom(parent_spatial_velocity)
         linear_velocity = parent_linear_velocity + wp.cross(parent_angular_velocity, parent_orig_to_child_orig)
 
-        if joint_type == wp.sim.JOINT_REVOLUTE:
+        if joint_type == newton.JointType.REVOLUTE:
             # If this is a revolute joint, the angular velocity of the link will update and we'll shift
             # the origin to the new joint.
-            joint_axis_in_world_coords = transform_vector(X_child2world, local_joint_axis)  # Compute joint axis in world coords.
+            joint_axis_in_world_coords = transform_vector(X_child2world,
+                                                          local_joint_axis)  # Compute joint axis in world coords.
             angular_velocity = parent_angular_velocity + qd * joint_axis_in_world_coords
 
         spatial_velocity = wp.spatial_vector(angular_velocity, linear_velocity)
@@ -383,8 +385,7 @@ def joint_axes_kernel(
         local_joint_axes: wp.array(dtype=wp.vec3, ndim=1),
         # outputs
         link_joint_axes: wp.array(dtype=wp.vec3, ndim=2)):
-
-    batch_i,joint_i = wp.tid()
+    batch_i, joint_i = wp.tid()
     link_i = cspace2link[joint_i]
     world_axis = transform_vector(link_transforms[batch_i, link_i], local_joint_axes[link_i])
     link_joint_axes[batch_i, joint_i] = world_axis
@@ -399,10 +400,9 @@ def jacobians_from_axes_kernel(
         link_ancestory_matrix: wp.array(dtype=int, ndim=2),
         # outputs
         link_jacobians: wp.array(dtype=wp.vec3, ndim=3)):
-
     # link_i is the link we're taking the Jacobian for, and joint_link_i is the link corresponding
     # to the joint we're perturbing (the particular column of the Jacobian).
-    batch_i,link_i,joint_i = wp.tid()
+    batch_i, link_i, joint_i = wp.tid()
     joint_link_i = cspace2link[joint_i]
 
     if link_ancestory_matrix[joint_link_i, link_i] == 0:
@@ -430,6 +430,7 @@ class KinematicsBase(object):
     each of the links. Additional, (using that information) we can calculate the Jacobians of the
     transforms as well.
     """
+
     def __init__(self, urdf_path, batch_size, device, verbose):
         self.device = device
         self.batch_size = batch_size
@@ -438,13 +439,13 @@ class KinematicsBase(object):
 
         if verbose:
             print("<parsing the URDF>")
-        self.builder = wp.sim.ModelBuilder()
+        self.builder = newton.ModelBuilder()
 
         if verbose:
             print("urdf_path:", urdf_path)
         self.urdf_info = parse_urdf(
-                urdf_path, self.builder, wp.transform_identity(),
-                include_collisions=False, verbose=verbose)
+            urdf_path, self.builder, wp.transform_identity(),
+            verbose=verbose)
         self.model = self.builder.finalize(self.device)
         self.link_index_map = self.urdf_info.link_index_map
         self.link_names = [name for name in self.urdf_info.link_index_map]
@@ -476,7 +477,7 @@ class KinematicsBase(object):
 
         # Find where joint_types are not equal to 3 (3 indicates a fixed joint) 
         joint_types_np = self.joint_types.numpy()
-        non_fixed_joint_indices = np.where(joint_types_np!=3)[0]
+        non_fixed_joint_indices = np.where(joint_types_np != 3)[0]
 
         # Inject non-fixed joint axis data into the full joint axes data array
         local_joint_axes_np[non_fixed_joint_indices] = local_articulated_joint_axes_np
@@ -499,11 +500,11 @@ class KinematicsBase(object):
         # Doesn't affect the kinematics benchmarks, just the fabrics benchmark.
         extra_floats = 378000  # = 2*batch_size*self.num_links*self.cspace_dim*3 for batch 1000
         # The following bracket the separation point between fast and slow.
-        #extra_floats = 336000  # fast
-        #extra_floats = 335000  # slow
-        #extra_floats = 100*335000  # large
+        # extra_floats = 336000  # fast
+        # extra_floats = 335000  # slow
+        # extra_floats = 100*335000  # large
         self.extra_memory = wp.zeros(shape=extra_floats, dtype=float, device=self.device)
-                
+
     def get_cspace_index(self, joint_name):
         return self.urdf_info.cspace_name2index_map[joint_name]
 
@@ -534,19 +535,19 @@ class Kinematics(KinematicsBase):
 
         # Output space
         self.batch_link_transforms = wp.zeros(
-                shape=(batch_size, self.num_links), dtype=wp.transform, device=self.device,
-                requires_grad=True)
+            shape=(batch_size, self.num_links), dtype=wp.transform, device=self.device,
+            requires_grad=True)
         self.batch_link_spatial_velocities = wp.zeros(
-                shape=(batch_size, self.num_links), dtype=wp.spatial_vector, device=self.device,
-                requires_grad=True)
+            shape=(batch_size, self.num_links), dtype=wp.spatial_vector, device=self.device,
+            requires_grad=True)
         self.batch_joint_axes = wp.zeros(
-                shape=(batch_size, self.cspace_dim), dtype=wp.vec3, device=self.device,
-                requires_grad=True)
+            shape=(batch_size, self.cspace_dim), dtype=wp.vec3, device=self.device,
+            requires_grad=True)
         self.batch_link_jacobians = wp.zeros(
-                shape=(batch_size, self.num_links, self.cspace_dim), dtype=wp.vec3,
-                device=self.device,
-                requires_grad=True)
-        
+            shape=(batch_size, self.num_links, self.cspace_dim), dtype=wp.vec3,
+            device=self.device,
+            requires_grad=True)
+
         # Torch handles
         self.batch_link_transforms_torch = wp.torch.to_torch(self.batch_link_transforms)
         self.batch_link_spatial_velocities_torch = wp.torch.to_torch(self.batch_link_spatial_velocities)
@@ -587,9 +588,9 @@ class Kinematics(KinematicsBase):
         if jacobians:
             self._jacobians_from_axes()
 
-    def fd_position_jacobian_torch(self, q_torch, link_index, 
-            eps=1e-4, 
-            thread_across_links=None):
+    def fd_position_jacobian_torch(self, q_torch, link_index,
+                                   eps=1e-4,
+                                   thread_across_links=None):
         d = len(q_torch)  # Dimension of the C-space
         if d != self.cspace_dim:
             raise RuntimeError("q_torch has the wrong number of dimensions. Found {}, should be {}".format(
@@ -597,15 +598,15 @@ class Kinematics(KinematicsBase):
 
         # Construct a batch of configs for computing the fd Jacobian in parallel. The first d batch
         # configurations are perturbed, and final d+1st config is the original config.
-        batch_q_torch = q_torch.repeat(d+1, 1)
-        batch_q_torch[:d,:] += eps * torch.eye(d)
+        batch_q_torch = q_torch.repeat(d + 1, 1)
+        batch_q_torch[:d, :] += eps * torch.eye(d)
 
         # Compute the FK for the batch and extract the positions.
         self.eval(wp.torch.from_torch(batch_q_torch), thread_across_links=thread_across_links)
-        X = self.batch_link_transforms_torch[:(d+1), link_index, :3]
+        X = self.batch_link_transforms_torch[:(d + 1), link_index, :3]
 
         # Compute the Jacobian transpose using finite-differencing of the perturbed positions.
-        Jt = (X[:-1,:] - X[-1,:].repeat(d,1)) / eps
+        Jt = (X[:-1, :] - X[-1, :].repeat(d, 1)) / eps
         return Jt.t()  # Return the transpose of that.
 
     def _fk_transforms(self, batch_q):
@@ -677,7 +678,7 @@ class Kinematics(KinematicsBase):
         wp.launch(kernel=joint_axes_kernel,
                   dim=(self.active_batch_size, self.cspace_dim),
                   inputs=[self.cspace2link, self.batch_link_transforms, self.local_joint_axes],
-                  outputs=[self.batch_joint_axes], 
+                  outputs=[self.batch_joint_axes],
                   device=self.device)
 
     def _jacobians_from_axes(self):
@@ -685,13 +686,13 @@ class Kinematics(KinematicsBase):
                   dim=(self.active_batch_size, self.num_links, self.cspace_dim),
                   inputs=[self.cspace2link, self.batch_link_transforms, self.batch_joint_axes,
                           self.link_ancestory_matrix],
-                  outputs=[self.batch_link_jacobians], 
+                  outputs=[self.batch_link_jacobians],
                   device=self.device)
 
 
-#======================================================================================
+# ======================================================================================
 # Everything below is legacy, retained for benchmarking purposes
-#======================================================================================
+# ======================================================================================
 
 
 @wp.kernel
@@ -706,9 +707,8 @@ def eval_kinematics_with_jacobians_kernel(
         joint_transforms_in_parent_coords: wp.array(dtype=wp.transform, ndim=1),
         local_joint_axes: wp.array(dtype=wp.vec3, ndim=1),
         link_transforms: wp.array(dtype=wp.transform, ndim=2),
-        #link_jacobians: wp.array(dtype=wp.vec3, ndim=3)):
+        # link_jacobians: wp.array(dtype=wp.vec3, ndim=3)):
         link_jacobians: wp.array(dtype=wp.spatial_vector, ndim=3)):
-
     tid = wp.tid()
 
     cspace_index = int(0)
@@ -721,13 +721,13 @@ def eval_kinematics_with_jacobians_kernel(
 
         joint_axis = local_joint_axes[link_index]
         X_pj = joint_transforms_in_parent_coords[link_index]
-        
+
         joint_type = joint_types[link_index]
-        if joint_type == wp.sim.JOINT_REVOLUTE:
+        if joint_type == newton.JointType.REVOLUTE:
             q = cspace_q[tid, cspace_index]
             cspace_index += 1
             X_jc = wp.transform(wp.vec3(), wp.quat_from_axis_angle(joint_axis, q))
-        elif joint_type == wp.sim.JOINT_FIXED:
+        elif joint_type == newton.JointType.FIXED:
             X_jc = wp.transform_identity()
 
         link_transforms[tid, link_index] = X_wp * X_pj * X_jc
@@ -748,7 +748,7 @@ def eval_kinematics_with_jacobians_kernel(
                 e = transform_get_translation(link_transforms[tid, link_i])
                 p = e - o
                 link_jacobians[tid, jacobian_i, cspace_i] = wp.spatial_vector(cross(a, p), a)
-                #link_jacobians[tid, jacobian_i, cspace_i] = cross(p, a)
+                # link_jacobians[tid, jacobian_i, cspace_i] = cross(p, a)
 
                 cspace_i += 1
 
@@ -760,7 +760,6 @@ def task_space_velocities_from_jacobians_kernel(
         cspace_dim: int,
         batch_link_jacobians: wp.array(dtype=wp.vec3, ndim=3),
         batch_link_origin_velocities: wp.array(dtype=wp.vec3, ndim=2)):
-        
     batch_index, link_index = wp.tid()
 
     qd = batch_qd[batch_index]
@@ -782,9 +781,9 @@ def quat_to_matrix_direct(quat: wp.quat):
     qy2 = qy * qy
     qz2 = qz * qz
     R = wp.mat33(
-            1. - 2.*qy2 - 2.*qz2, 2.*qx*qy - 2.*qz*qw, 2.*qx*qz + 2.*qy*qw,
-            2.*qx*qy + 2.*qz*qw, 1. - 2.*qx2 - 2.*qz2, 2.*qy*qz - 2.*qx*qw,
-            2.*qx*qz - 2.*qy*qw, 2.*qy*qz + 2.*qx*qw, 1. - 2.*qx2 - 2.*qy2)
+        1. - 2. * qy2 - 2. * qz2, 2. * qx * qy - 2. * qz * qw, 2. * qx * qz + 2. * qy * qw,
+        2. * qx * qy + 2. * qz * qw, 1. - 2. * qx2 - 2. * qz2, 2. * qy * qz - 2. * qx * qw,
+        2. * qx * qz - 2. * qy * qw, 2. * qy * qz + 2. * qx * qw, 1. - 2. * qx2 - 2. * qy2)
     return R
 
 
@@ -794,12 +793,11 @@ def calc_rotation_matrices_kernel(
         link_transforms: wp.array(dtype=wp.transform, ndim=2),
         # outputs
         link_rotation_matrices: wp.array(dtype=wp.mat33, ndim=2)):
-
     batch_i, link_i = wp.tid()
     quat = transform_get_rotation(link_transforms[batch_i, link_i])
     link_rotation_matrices[batch_i, link_i] = quat_to_matrix_direct(quat)
-    #world_axis = transform_vector(link_transforms[batch_i, link_i], local_joint_axes[link_i])
-    #link_joint_axes[batch_i, joint_i] = world_axis
+    # world_axis = transform_vector(link_transforms[batch_i, link_i], local_joint_axes[link_i])
+    # link_joint_axes[batch_i, joint_i] = world_axis
 
 
 @wp.kernel
@@ -811,14 +809,14 @@ def calc_frame_jacobians_kernel(
         link_joint_axes: wp.array(dtype=wp.vec3, ndim=2),
         # outputs
         link_frame_jacobians: wp.array(dtype=wp.vec3, ndim=4)):
-        #link_orig_jacobians: wp.array(dtype=wp.vec3, ndim=3),
-        #link_axis_x_jacobians: wp.array(dtype=wp.vec3, ndim=3),
-        #link_axis_y_jacobians: wp.array(dtype=wp.vec3, ndim=3),
-        #link_axis_z_jacobians: wp.array(dtype=wp.vec3, ndim=3)):
+    # link_orig_jacobians: wp.array(dtype=wp.vec3, ndim=3),
+    # link_axis_x_jacobians: wp.array(dtype=wp.vec3, ndim=3),
+    # link_axis_y_jacobians: wp.array(dtype=wp.vec3, ndim=3),
+    # link_axis_z_jacobians: wp.array(dtype=wp.vec3, ndim=3)):
 
     # link_i is the link we're taking the Jacobian for, and joint_link_i is the link corresponding
     # to the joint we're perturbing (the particular column of the Jacobian).
-    batch_i,link_i,link_element_i, joint_i = wp.tid()
+    batch_i, link_i, link_element_i, joint_i = wp.tid()
     joint_link_i = cspace2link[joint_i]
 
     if joint_link_i > link_i:
@@ -856,10 +854,9 @@ def calc_frame_jacobians_kernel2(
         link_axis_x_jacobians: wp.array(dtype=wp.vec3, ndim=3),
         link_axis_y_jacobians: wp.array(dtype=wp.vec3, ndim=3),
         link_axis_z_jacobians: wp.array(dtype=wp.vec3, ndim=3)):
-
     # link_i is the link we're taking the Jacobian for, and joint_link_i is the link corresponding
     # to the joint we're perturbing (the particular column of the Jacobian).
-    batch_i,link_i,link_element_i, joint_i = wp.tid()
+    batch_i, link_i, link_element_i, joint_i = wp.tid()
     joint_link_i = cspace2link[joint_i]
 
     if joint_link_i > link_i:
@@ -903,8 +900,9 @@ class KinematicsLegacy(object):
     creating Warp's cuda graphs. The graph is just the list of kernels, independent of the python
     interfacing structures used to organize the memory and launch the kernels.
     """
+
     def __init__(self, batch_size, model, link_index_map, cspace2link, cspace_joint_limits,
-            jacobians_needed):
+                 jacobians_needed):
         self.device = model.device
         self.batch_size = batch_size
         self.model = model
@@ -922,44 +920,44 @@ class KinematicsLegacy(object):
         self.cspace_dim = len(model.joint_q)
         self.num_links = len(model.joint_type)
 
-        #self.jacobians_needed = ["right_gripper", "right_gripper_x", "right_gripper_z"]
-        #self.jacobians_needed = ["right_gripper", "right_gripper_x"]
-        #self.jacobians_needed = ["right_gripper"]
+        # self.jacobians_needed = ["right_gripper", "right_gripper_x", "right_gripper_z"]
+        # self.jacobians_needed = ["right_gripper", "right_gripper_x"]
+        # self.jacobians_needed = ["right_gripper"]
         self.jacobians_needed = jacobians_needed
         self.jacobian_link_indices = wp.array([
-                self.link_index_map[link_name] for link_name in self.jacobians_needed],
-                dtype=int, device=self.device)
+            self.link_index_map[link_name] for link_name in self.jacobians_needed],
+            dtype=int, device=self.device)
 
         # Output space
         self.batch_link_transforms = wp.zeros(shape=(batch_size, self.num_links), dtype=wp.transform,
-                device=self.device)
+                                              device=self.device)
         self.link_transforms = self.batch_link_transforms  # legacy naming
         self.batch_link_spatial_velocities = wp.zeros(shape=(batch_size, self.num_links),
-                dtype=wp.spatial_vector, device=self.device)
+                                                      dtype=wp.spatial_vector, device=self.device)
         self.batch_joint_axes = wp.zeros(shape=(batch_size, self.cspace_dim), dtype=wp.vec3,
-                device=self.device)
+                                         device=self.device)
         self.link_joint_axes = self.batch_joint_axes  # Legacy naming
-        self.link_rotation_matrices = wp.zeros(shape=(batch_size, self.num_links), dtype=wp.mat33, 
-                device=self.device)
+        self.link_rotation_matrices = wp.zeros(shape=(batch_size, self.num_links), dtype=wp.mat33,
+                                               device=self.device)
         self.batch_link_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                             dtype=wp.vec3, device=self.device)
         self.link_jacobians = self.batch_link_jacobians  # Legacy naming
         self.link_jacobians_full = wp.zeros(shape=(batch_size, len(self.jacobians_needed), self.cspace_dim),
-                dtype=wp.spatial_vector, device=self.device)
+                                            dtype=wp.spatial_vector, device=self.device)
         self.link_frame_jacobians = wp.zeros(shape=(batch_size, self.num_links, 4, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                             dtype=wp.vec3, device=self.device)
         self.link_orig_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                            dtype=wp.vec3, device=self.device)
         self.link_axis_x_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                              dtype=wp.vec3, device=self.device)
         self.link_axis_y_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                              dtype=wp.vec3, device=self.device)
         self.link_axis_z_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                              dtype=wp.vec3, device=self.device)
         self.batch_link_origin_velocities = wp.zeros(
-                shape=(batch_size, self.num_links),
-                dtype=wp.vec3,
-                device=self.device)
+            shape=(batch_size, self.num_links),
+            dtype=wp.vec3,
+            device=self.device)
 
         # Extract the link paths.
         self.link_paths = paths_to_warp(extract_link_paths(self.joint_parents.numpy()), device=self.device)
@@ -970,7 +968,7 @@ class KinematicsLegacy(object):
     def eval(self, cspace_q):
         wp.launch(kernel=link_transforms_kernel,
                   dim=self.batch_size,
-                  inputs=[    
+                  inputs=[
                       cspace_q,
                       self.joint_types.shape[0],  # num links
                       self.joint_types,
@@ -985,7 +983,7 @@ class KinematicsLegacy(object):
         self.eval(cspace_q)  # Calculates self.link_transforms
         wp.launch(kernel=joint_axes_kernel,
                   dim=(self.batch_size, self.cspace_dim),
-                  inputs=[self.cspace2link, self.link_transforms, self.local_joint_axes, self.batch_joint_axes], 
+                  inputs=[self.cspace2link, self.link_transforms, self.local_joint_axes, self.batch_joint_axes],
                   device=self.device)
         return self.link_transforms, self.link_joint_axes
 
@@ -994,7 +992,7 @@ class KinematicsLegacy(object):
         self.eval_with_axes(cspace_q)
         wp.launch(kernel=jacobians_from_axes_kernel,
                   dim=(self.batch_size, self.num_links, self.cspace_dim),
-                  inputs=[self.cspace2link, self.link_transforms, self.link_joint_axes], 
+                  inputs=[self.cspace2link, self.link_transforms, self.link_joint_axes],
                   outputs=[self.link_jacobians],
                   device=self.device)
         return self.link_transforms, self.link_jacobians
@@ -1002,7 +1000,7 @@ class KinematicsLegacy(object):
     def eval_kinematics_with_jacobians(self, cspace_q):
         wp.launch(kernel=eval_kinematics_with_jacobians_kernel,
                   dim=self.batch_size,
-                  inputs=[    
+                  inputs=[
                       cspace_q,
                       len(self.jacobian_link_indices),
                       self.jacobian_link_indices,
@@ -1013,7 +1011,7 @@ class KinematicsLegacy(object):
                       self.joint_transforms_in_parent_coords,
                       self.local_joint_axes,
                       self.link_transforms,
-                      #self.link_jacobians],
+                      # self.link_jacobians],
                       self.link_jacobians_full],
                   device=self.device)
         return self.link_transforms, self.link_jacobians_full
@@ -1026,7 +1024,7 @@ class KinematicsLegacy(object):
         self.eval_with_axes(cspace_q)
         wp.launch(kernel=calc_rotation_matrices_kernel,
                   dim=(self.batch_size, self.num_links),
-                  inputs=[self.link_transforms], 
+                  inputs=[self.link_transforms],
                   outputs=[self.link_rotation_matrices],
                   device=self.device)
         return self.link_transforms, self.link_rotation_matrices
@@ -1035,7 +1033,7 @@ class KinematicsLegacy(object):
         self.eval_with_rotation_matrices(cspace_q)
         wp.launch(kernel=calc_frame_jacobians_kernel,
                   dim=(self.batch_size, self.num_links, 4, self.cspace_dim),
-                  inputs=[self.cspace2link, self.link_transforms, self.link_rotation_matrices, self.link_joint_axes], 
+                  inputs=[self.cspace2link, self.link_transforms, self.link_rotation_matrices, self.link_joint_axes],
                   outputs=[self.link_frame_jacobians],
                   device=self.device)
         return self.link_transforms, self.link_frame_jacobians
@@ -1044,7 +1042,7 @@ class KinematicsLegacy(object):
         self.eval_with_rotation_matrices(cspace_q)
         wp.launch(kernel=calc_frame_jacobians_kernel2,
                   dim=(self.batch_size, self.num_links, 4, self.cspace_dim),
-                  inputs=[self.cspace2link, self.link_transforms, self.link_rotation_matrices, self.link_joint_axes], 
+                  inputs=[self.cspace2link, self.link_transforms, self.link_rotation_matrices, self.link_joint_axes],
                   outputs=[
                       self.link_orig_jacobians,
                       self.link_axis_x_jacobians,
@@ -1057,7 +1055,7 @@ class KinematicsLegacy(object):
         if thread_across_links:
             wp.launch(kernel=eval_kinematics_with_velocities_and_axes_multithreaded_kernel,
                       dim=(self.batch_size, self.num_links),
-                      inputs=[    
+                      inputs=[
                           batch_cspace_q,
                           batch_cspace_qd,
                           self.joint_types,
@@ -1072,7 +1070,7 @@ class KinematicsLegacy(object):
         else:
             wp.launch(kernel=eval_kinematics_with_velocities_and_axes_kernel,
                       dim=self.batch_size,
-                      inputs=[    
+                      inputs=[
                           batch_cspace_q,
                           batch_cspace_qd,
                           self.joint_types.shape[0],  # num links
@@ -1091,7 +1089,8 @@ class KinematicsLegacy(object):
         self.eval_fk(batch_cspace_q, batch_cspace_qd, thread_across_links)
         wp.launch(kernel=jacobians_from_axes_kernel,
                   dim=(self.batch_size, self.num_links, self.cspace_dim),
-                  inputs=[self.cspace2link, self.batch_link_transforms, self.batch_joint_axes, self.batch_link_jacobians], 
+                  inputs=[self.cspace2link, self.batch_link_transforms, self.batch_joint_axes,
+                          self.batch_link_jacobians],
                   device=self.device)
         return self.batch_link_transforms, self.batch_link_spatial_velocities, self.batch_link_jacobians
 
@@ -1113,6 +1112,7 @@ class KinematicsLegacy(object):
 class KinematicsNoVelocities(KinematicsBase):
     """ Implements the portion of the kinematics API that doesn't include velocities.
     """
+
     def __init__(self, urdf_path, batch_size, thread_across_links=True, device="cuda", verbose=False):
         super().__init__(urdf_path, batch_size, device, verbose)
 
@@ -1120,11 +1120,11 @@ class KinematicsNoVelocities(KinematicsBase):
 
         # Output space
         self.batch_link_transforms = wp.zeros(shape=(batch_size, self.num_links), dtype=wp.transform,
-                device=self.device)
+                                              device=self.device)
         self.batch_joint_axes = wp.zeros(shape=(batch_size, self.cspace_dim), dtype=wp.vec3,
-                device=self.device)
+                                         device=self.device)
         self.batch_link_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                             dtype=wp.vec3, device=self.device)
 
     def eval_link_transforms(self, batch_q):
         if self.thread_across_links:
@@ -1141,7 +1141,7 @@ class KinematicsNoVelocities(KinematicsBase):
     def _fk_transforms(self, batch_q):
         wp.launch(kernel=link_transforms_kernel,
                   dim=self.batch_size,
-                  inputs=[    
+                  inputs=[
                       batch_q,
                       self.num_links,
                       self.joint_types,
@@ -1154,7 +1154,7 @@ class KinematicsNoVelocities(KinematicsBase):
     def _fk_transforms_multithreaded(self, batch_q):
         wp.launch(kernel=link_transforms_multithreaded_kernel,
                   dim=(self.batch_size, self.num_links),
-                  inputs=[    
+                  inputs=[
                       batch_q,
                       self.joint_types,
                       self.joint_parents,
@@ -1167,14 +1167,16 @@ class KinematicsNoVelocities(KinematicsBase):
     def _axes_from_fk_transforms(self):
         wp.launch(kernel=joint_axes_kernel,
                   dim=(self.batch_size, self.cspace_dim),
-                  inputs=[self.cspace2link, self.batch_link_transforms, self.local_joint_axes, self.batch_joint_axes], 
+                  inputs=[self.cspace2link, self.batch_link_transforms, self.local_joint_axes, self.batch_joint_axes],
                   device=self.device)
 
     def _jacobians_from_axes(self):
         wp.launch(kernel=jacobians_from_axes_kernel,
                   dim=(self.batch_size, self.num_links, self.cspace_dim),
-                  inputs=[self.cspace2link, self.batch_link_transforms, self.batch_joint_axes, self.batch_link_jacobians], 
+                  inputs=[self.cspace2link, self.batch_link_transforms, self.batch_joint_axes,
+                          self.batch_link_jacobians],
                   device=self.device)
+
 
 class KinematicsStagewise(KinematicsNoVelocities):
     """ A stagewise implementation of kinematics using separate kernels to compute many incremental
@@ -1189,14 +1191,15 @@ class KinematicsStagewise(KinematicsNoVelocities):
     Note: Should calculate spatial velocities from Jacobians using xd = J qd (using the axes as the
     rotational Jacobian).
     """
+
     def __init__(self, urdf_path, batch_size, thread_across_links=True, device="cuda", verbose=False):
         super().__init__(urdf_path, batch_size, thread_across_links, device, verbose)
 
         # Output space
         self.batch_link_origin_velocities = wp.zeros(
-                shape=(batch_size, self.num_links),
-                dtype=wp.vec3,
-                device=self.device)
+            shape=(batch_size, self.num_links),
+            dtype=wp.vec3,
+            device=self.device)
 
     def eval_link_transforms_with_spatial_velocities(self, batch_q, batch_qd):
         """ Warning: currently this method returns link origin velocities rather than spatial
@@ -1232,13 +1235,13 @@ class KinematicsOrigInterface(KinematicsNoVelocities):
 
         # Output space
         self.batch_link_transforms = wp.zeros(shape=(batch_size, self.num_links), dtype=wp.transform,
-                device=self.device)
+                                              device=self.device)
         self.batch_link_spatial_velocities = wp.zeros(shape=(batch_size, self.num_links),
-                dtype=wp.spatial_vector, device=self.device)
+                                                      dtype=wp.spatial_vector, device=self.device)
         self.batch_joint_axes = wp.zeros(shape=(batch_size, self.cspace_dim), dtype=wp.vec3,
-                device=self.device)
+                                         device=self.device)
         self.batch_link_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                             dtype=wp.vec3, device=self.device)
 
     def eval_link_transforms_with_spatial_velocities(self, batch_q, batch_qd):
         if self.thread_across_links:
@@ -1257,7 +1260,7 @@ class KinematicsOrigInterface(KinematicsNoVelocities):
     def _fk_transforms_with_spatial_velocities_multithreaded(self, batch_q, batch_qd):
         wp.launch(kernel=eval_kinematics_with_velocities_and_axes_multithreaded_kernel,
                   dim=(self.batch_size, self.num_links),
-                  inputs=[    
+                  inputs=[
                       batch_q,
                       batch_qd,
                       self.joint_types,
@@ -1274,7 +1277,7 @@ class KinematicsOrigInterface(KinematicsNoVelocities):
     def _fk_transforms_with_spatial_velocities(self, batch_q, batch_qd):
         wp.launch(kernel=eval_kinematics_with_velocities_and_axes_kernel,
                   dim=self.batch_size,
-                  inputs=[    
+                  inputs=[
                       batch_q,
                       batch_qd,
                       self.joint_types.shape[0],  # num links
@@ -1302,8 +1305,8 @@ class KinematicsRaw:
         if verbose:
             print("urdf_path:", urdf_path)
         link_index_map, cspace2link, cspace_joint_limits = parse_urdf(
-                urdf_path, builder, wp.transform_identity(),
-                include_collisions=False, verbose=verbose)
+            urdf_path, builder, wp.transform_identity(),
+            include_collisions=False, verbose=verbose)
         self.link_index_map = link_index_map
         self.cspace2link = cspace2link
         self.cspace_joint_limits = cspace_joint_limits
@@ -1330,24 +1333,24 @@ class KinematicsRaw:
 
         # Output space.
         self.batch_link_transforms = wp.zeros(shape=(batch_size, self.num_links), dtype=wp.transform,
-                device=self.device)
+                                              device=self.device)
         self.batch_link_spatial_velocities = wp.zeros(shape=(batch_size, self.num_links),
-                dtype=wp.spatial_vector, device=self.device)
+                                                      dtype=wp.spatial_vector, device=self.device)
         self.batch_joint_axes = wp.zeros(shape=(batch_size, self.cspace_dim), dtype=wp.vec3,
-                device=self.device)
+                                         device=self.device)
         self.batch_link_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                             dtype=wp.vec3, device=self.device)
 
         # Somehow having this extra output space makes fabrics run faster... Doesn't affect the
         # kinematics benchmarks. We probably need more stable fabrics benchmarks.
         self.link_orig_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                            dtype=wp.vec3, device=self.device)
         self.link_axis_x_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                              dtype=wp.vec3, device=self.device)
         self.link_axis_y_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                              dtype=wp.vec3, device=self.device)
         self.link_axis_z_jacobians = wp.zeros(shape=(batch_size, self.num_links, self.cspace_dim),
-                dtype=wp.vec3, device=self.device)
+                                              dtype=wp.vec3, device=self.device)
 
     def get_link_index(self, link_name):
         return self.link_index_map[link_name]
@@ -1356,7 +1359,7 @@ class KinematicsRaw:
         if self.thread_across_links:
             wp.launch(kernel=eval_kinematics_with_velocities_and_axes_multithreaded_kernel,
                       dim=(self.batch_size, self.num_links),
-                      inputs=[    
+                      inputs=[
                           batch_q,
                           batch_qd,
                           self.joint_types,
@@ -1371,7 +1374,7 @@ class KinematicsRaw:
         else:
             wp.launch(kernel=eval_kinematics_with_velocities_and_axes_kernel,
                       dim=self.batch_size,
-                      inputs=[    
+                      inputs=[
                           batch_q,
                           batch_qd,
                           self.joint_types.shape[0],  # num links
@@ -1385,8 +1388,8 @@ class KinematicsRaw:
                       device=self.device)
         wp.launch(kernel=jacobians_from_axes_kernel,
                   dim=(self.batch_size, self.num_links, self.cspace_dim),
-                  inputs=[self.cspace2link, self.batch_link_transforms, self.batch_joint_axes, self.batch_link_jacobians], 
+                  inputs=[self.cspace2link, self.batch_link_transforms, self.batch_joint_axes,
+                          self.batch_link_jacobians],
                   device=self.device)
 
         return self.batch_link_transforms, self.batch_link_spatial_velocities, self.batch_link_jacobians
-

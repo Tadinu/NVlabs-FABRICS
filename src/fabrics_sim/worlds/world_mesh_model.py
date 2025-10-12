@@ -4,29 +4,30 @@ import numpy as np
 import yaml
 import time
 
-from warp.sim.model import Mesh
+import newton
 
 from fabrics_sim.utils.path_utils import get_world_path, get_object_urdf_path
 
+
 @wp.kernel
 def transform_mesh_points(
-    # inputs
-    num_meshes: int,
-    mesh_points: wp.array(dtype=wp.vec3),
-    mesh_indices: wp.array(dtype=int),
-    mesh_object_transforms: wp.array(dtype=wp.mat44),
-    mesh_object_starting_face_index: wp.array(dtype=int),
-    mesh_object_ending_face_index: wp.array(dtype=int),
-    # outputs
-    transformed_mesh_points: wp.array(dtype=wp.vec3)):
-
+        # inputs
+        num_meshes: int,
+        mesh_points: wp.array(dtype=wp.vec3),
+        mesh_indices: wp.array(dtype=int),
+        mesh_object_transforms: wp.array(dtype=wp.mat44),
+        mesh_object_starting_face_index: wp.array(dtype=int),
+        mesh_object_ending_face_index: wp.array(dtype=int),
+        # outputs
+        transformed_mesh_points: wp.array(dtype=wp.vec3)):
     tid = wp.tid()
 
     for i in range(num_meshes):
         if tid >= mesh_object_starting_face_index[i] and tid <= mesh_object_ending_face_index[i]:
-            transformed_mesh_points[tid] =\
-                    wp.transform_point(mesh_object_transforms[i], mesh_points[tid])
-            #break
+            transformed_mesh_points[tid] = \
+                wp.transform_point(mesh_object_transforms[i], mesh_points[tid])
+            # break
+
 
 class WorldMeshModel():
     def __init__(self, objects_name, objects_face_indices, objects_vertices):
@@ -45,9 +46,9 @@ class WorldMeshModel():
                 self.object_ending_face_index = [num_vertices - 1]
             else:
                 self.object_starting_face_index.append(
-                        self.object_ending_face_index[-1] + 1)
-                self.object_ending_face_index.append(self.object_starting_face_index[-1] +\
-                        num_vertices - 1)
+                    self.object_ending_face_index[-1] + 1)
+                self.object_ending_face_index.append(self.object_starting_face_index[-1] + \
+                                                     num_vertices - 1)
 
         # Stack all face indices together into one long list, shifting them accordingly
         # for every object.
@@ -64,16 +65,16 @@ class WorldMeshModel():
         world_mesh = Mesh(objects_vertices_stacked, objects_face_indices_stacked)
         world_mesh.finalize(device='cuda')
         self.world_mesh = world_mesh.mesh
-        self.world_mesh.refit() # run this so it can be used in raycasting.
-       
+        self.world_mesh.refit()  # run this so it can be used in raycasting.
+
         # Allocate reference points which we will transform from.
         self.world_mesh_points = wp.clone(self.world_mesh.points)
 
         # Convert starting and ending index lists to warp arrays
-        self.object_starting_face_index =\
-                wp.array(self.object_starting_face_index, dtype=int, device='cuda')
-        self.object_ending_face_index =\
-                wp.array(self.object_ending_face_index, dtype=int, device='cuda')
+        self.object_starting_face_index = \
+            wp.array(self.object_starting_face_index, dtype=int, device='cuda')
+        self.object_ending_face_index = \
+            wp.array(self.object_ending_face_index, dtype=int, device='cuda')
 
     def update_mesh(self, objects_transforms_list, robot_pose):
         # First find the transfrom from robot to objects, T_r_o
@@ -84,7 +85,7 @@ class WorldMeshModel():
             T_w_o = objects_transforms_list[i]
             T_r_o = np.dot(T_r_w, T_w_o)
             objects_transforms_list[i] = T_r_o
-       
+
         # Convert list of object poses expressed in robot into warp array.
         objects_transforms = wp.array(objects_transforms_list, dtype=wp.mat44, device='cuda')
 
@@ -97,10 +98,10 @@ class WorldMeshModel():
                       objects_transforms,
                       self.object_starting_face_index,
                       self.object_ending_face_index
-                      ],
+                  ],
                   outputs=[
                       self.world_mesh.points
-                      ],
+                  ],
                   device='cuda')
 
         # Run a refit so we can do raycasting.
@@ -114,22 +115,23 @@ class WorldMeshModel():
     def mesh_points(self):
         return self.world_mesh_points
 
+
 @wp.kernel
 def transform_single_mesh_points(
-    # inputs
-    robot_body_points: wp.array(dtype=wp.vec3),
-    transform: wp.transform,
-    scaling: wp.vec3,
-    # outputs
-    transformed_robot_body_points: wp.array(dtype=wp.vec3)):
-
+        # inputs
+        robot_body_points: wp.array(dtype=wp.vec3),
+        transform: wp.transform,
+        scaling: wp.vec3,
+        # outputs
+        transformed_robot_body_points: wp.array(dtype=wp.vec3)):
     tid = wp.tid()
     # First scale the body points expressed in body-centric coordinate system
     transformed_robot_body_points[tid] = cw_mul(scaling, robot_body_points[tid])
 
     # Now transform the scaled points
-    transformed_robot_body_points[tid] =\
+    transformed_robot_body_points[tid] = \
         wp.transform_point(transform, transformed_robot_body_points[tid])
+
 
 class WorldMeshesModel():
     def __init__(self, batch_size, max_objects_per_env, device,
@@ -152,11 +154,11 @@ class WorldMeshesModel():
         self.mesh_ids = torch.zeros(batch_size, max_objects_per_env, dtype=torch.int64,
                                     device=device)
         self.mesh_indicator = torch.zeros(batch_size, max_objects_per_env, dtype=torch.int64,
-                                    device=device)
+                                          device=device)
 
-        #assert(not (world_filename == None and world_dict == None)),\
+        # assert(not (world_filename == None and world_dict == None)),\
         #    "Both world_filename and world_dict cannot be None"
-        
+
         if world_filename is not None:
             self.load_world_from_file(world_filename)
         else:
@@ -188,7 +190,7 @@ class WorldMeshesModel():
         # Early out if there is no world dict (empty world)
         if world_dict is None:
             return
-       
+
         for obj_name, obj_data in world_dict.items():
             # If object was not loaded from file before, called 'type', then create a new
             # allocation for this object
@@ -202,16 +204,16 @@ class WorldMeshesModel():
             # NOTE: we need to copy the mesh points and create the Mesh from those such
             # that we can retain the original mesh points expressed in body-fixed coordinates
             # and calculate new point positions based on transforms.
-            object_model_points = wp.zeros_like(object_model.shape_geo_src[0].mesh.points)
-            wp.copy(object_model_points, object_model.shape_geo_src[0].mesh.points)
-            object_mesh = wp.Mesh(object_model_points,
-                                  object_model.shape_geo_src[0].mesh.indices)
+            object_mesh_points = wp.zeros_like(object_model.shape_source[0].mesh.points)
+            wp.copy(object_mesh_points, object_model.shape_source[0].mesh.points)
+            object_mesh = wp.Mesh(object_mesh_points,
+                                  object_model.shape_source[0].mesh.indices)
 
             # Pull out the object transform
             x_form = [float(x) for x in obj_data['transform'].split()]
             object_transform = wp.transform(p=(x_form[0], x_form[1], x_form[2]),
-                q=(x_form[3], x_form[4], x_form[5], x_form[6]))
-            
+                                            q=(x_form[3], x_form[4], x_form[5], x_form[6]))
+
             # Pull out the object scaling
             scaling = [float(x) for x in obj_data['scaling'].split()]
             object_scaling = wp.vec3(scaling[0], scaling[1], scaling[2])
@@ -220,7 +222,7 @@ class WorldMeshesModel():
             wp.launch(kernel=transform_single_mesh_points,
                       dim=len(object_mesh.points),
                       inputs=[
-                          object_model.shape_geo_src[0].mesh.points,
+                          object_model.shape_source[0].mesh.points,
                           object_transform,
                           object_scaling],
                       outputs=[object_mesh.points],
@@ -230,11 +232,11 @@ class WorldMeshesModel():
             # TODO: if object poses are changing, then need to call refit as well. Need
             # to write functionality around moving objects around.
             object_mesh.refit()
-            
+
             # Add object model, object transform, and object_mesh in dictionary.
             self.add_object(obj_name, object_model, object_transform, object_mesh, object_scaling,
                             obj_data['env_index'])
-    
+
     def create_object_model(self, object_name):
         """
         Loads the object model urdf.
@@ -244,7 +246,7 @@ class WorldMeshesModel():
         """
 
         # Load the object.
-        builder = wp.sim.ModelBuilder()
+        builder = newton.ModelBuilder()
 
         object_urdf_filename = get_object_urdf_path(object_name)
         initial_rotation = wp.quat(0., 0., 0., 1.)
@@ -252,7 +254,7 @@ class WorldMeshesModel():
         initial_transform = wp.transform(initial_position, initial_rotation)
 
         print('importing object')
-        wp.sim.parse_urdf(object_urdf_filename, builder, initial_transform)
+        builder.add_urdf(object_urdf_filename, initial_transform)
 
         # Finalize model.
         print('finalizing model')
@@ -277,12 +279,12 @@ class WorldMeshesModel():
             raise ValueError('Object already exists!')
 
         # Enter object data into object dictionary
-        self.objects[object_name] =\
-            { 'model': object_model,
-              'transform': object_transform,
-              'object_mesh': object_mesh,
-              'object_scaling': object_scaling,
-              'env_index': env_index}
+        self.objects[object_name] = \
+            {'model': object_model,
+             'transform': object_transform,
+             'object_mesh': object_mesh,
+             'object_scaling': object_scaling,
+             'env_index': env_index}
 
         # If object is being assigned to all envs indicated by env_index == "all", then cycle
         # through and add it to all envs
@@ -342,5 +344,3 @@ class WorldMeshesModel():
         for object_name, object_data in self.objects.items():
             object_names.append(object_name)
         return object_names
-
-
