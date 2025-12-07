@@ -9,6 +9,9 @@
 
 import os
 from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger("BaseFabric")
 
 import torch
 import yaml
@@ -93,6 +96,7 @@ class AccelConstraint(torch.autograd.Function):
 class FabricJointMeta:
     name: str
     type: newton.JointType
+    enabled: bool
     upper_limit: float
     lower_limit: float
 
@@ -689,18 +693,23 @@ class BaseFabric(torch.nn.Module):
             all_non_fixed_joints = []
             for i, joint_name in enumerate(self.model_builder.joint_key):
                 joint_type = self.model_builder.joint_type[i]
-                if self.model_builder.joint_enabled[i] and joint_type != newton.JointType.FIXED:
+                # NOTE/TODO: This check may be updated to accommodate the specific robot description!
+                if joint_type != newton.JointType.FIXED:
                     all_non_fixed_joints.append(FabricJointMeta(name=joint_name, type=joint_type,
+                                                                enabled=self.model_builder.joint_enabled[i],
                                                                 upper_limit=0.0, lower_limit=0.0))
-            assert len(all_non_fixed_joints) == len(self.model_builder.joint_limit_upper)
-
             # Then remove all non-enabled or non-Revolute ones
-            for i, joint in enumerate(all_non_fixed_joints):
-                if joint.type == newton.JointType.REVOLUTE:
+            if len(all_non_fixed_joints) == len(self.model_builder.joint_limit_upper):
+                for i, joint in enumerate(all_non_fixed_joints):
                     # NOTE: We are only supporting revolute joints right now.
-                    joint.upper_limit = self.model_builder.joint_limit_upper[i]
-                    joint.lower_limit = self.model_builder.joint_limit_lower[i]
-                    self.joints_meta.append(joint)
+                    if joint.enabled and joint.type == newton.JointType.REVOLUTE:
+                        joint.upper_limit = self.model_builder.joint_limit_upper[i]
+                        joint.lower_limit = self.model_builder.joint_limit_lower[i]
+                        self.joints_meta.append(joint)
+            else:
+                logger.warning(
+                    f"{robot_urdf_filename}: Number of Joint limits does not match number of enabled non-fixed joints "
+                    f"specified in the model description!")
 
             print('finalizing model')
             self.model = self.model_builder.finalize(device=self.device)
