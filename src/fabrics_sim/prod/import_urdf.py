@@ -133,11 +133,11 @@ def parse_urdf_annotated(filename_or_xml,
         # joint_axis = builder.joint_axis[i]
         # joint_parent_id = builder.joint_parent[i]
         joint_child_id = builder.joint_child[i]
-        if i < len(builder.joint_limit_lower):
-            cspace_joint_limits.append((builder.joint_limit_lower[i], builder.joint_limit_upper[i]))
         if joint_type != newton.JointType.FIXED:
             cspace_names.append(joint_key)
             cspace2link.append(joint_child_id)
+            joint_dof_id = builder.joint_qd_start[i]
+            cspace_joint_limits.append((builder.joint_limit_lower[joint_dof_id], builder.joint_limit_upper[joint_dof_id]))
         link2cspace.append(len(cspace_names) - 1)
         link_index_map[builder.body_key[joint_child_id]] = joint_child_id
 

@@ -690,27 +690,22 @@ class BaseFabric(torch.nn.Module):
             print('importing robot')
             self.model_builder.add_urdf(robot_urdf_filename, initial_transform)
 
+            # Count number of active joints, first read all joints to get their limits
+            for i, joint_name in enumerate(self.model_builder.joint_key):
+                joint_type = self.model_builder.joint_type[i]
+                # NOTE: We are only supporting revolute joints right now.
+                joint_enabled = self.model_builder.joint_enabled[i]
+                if joint_enabled and joint_type == newton.JointType.REVOLUTE:
+                    joint_dof_id = self.model_builder.joint_qd_start[i]
+                    self.joints_meta.append(FabricJointMeta(name=joint_name, type=joint_type,
+                                                            enabled=joint_enabled,
+                                                            dof_id=joint_dof_id,
+                                                            upper_limit=self.model_builder.joint_limit_upper[joint_dof_id],
+                                                            lower_limit=self.model_builder.joint_limit_lower[joint_dof_id]))
+
             print('finalizing model')
             self.model = self.model_builder.finalize(device=self.device)
             self.model.ground = True
-
-            # Count number of active joints, first read all joints to get their limits
-            all_non_fixed_joints = []
-            for i, joint_name in enumerate(self.model_builder.joint_key):
-                joint_type = self.model_builder.joint_type[i]
-                # NOTE/TODO: This check may be updated to accommodate the specific robot description!
-                if joint_type != newton.JointType.FIXED:
-                    all_non_fixed_joints.append(FabricJointMeta(name=joint_name, type=joint_type,
-                                                                enabled=self.model_builder.joint_enabled[i],
-                                                                dof_id=self.model_builder.joint_q_start[i],
-                                                                upper_limit=0.0, lower_limit=0.0))
-            # Then only take enabled & non-Revolute ones -> `self.joints_meta`
-            for _, joint in enumerate(all_non_fixed_joints):
-                # NOTE: We are only supporting revolute joints right now.
-                if joint.enabled and joint.type == newton.JointType.REVOLUTE:
-                    joint.upper_limit = self.model.joint_limit_upper.numpy()[joint.dof_id]
-                    joint.lower_limit = self.model.joint_limit_lower.numpy()[joint.dof_id]
-                    self.joints_meta.append(joint)
 
         # Allocate memeory for scaled accelerations
         self.allocate_scaled_accel()
