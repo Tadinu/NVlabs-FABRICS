@@ -1,5 +1,5 @@
 # Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.                          
-                                                                                                     
+
 # NVIDIA CORPORATION, its affiliates and licensors retain all intellectual                           
 # property and proprietary rights in and to this material, related                                   
 # documentation and any modifications thereto. Any use, reproduction,                                
@@ -14,6 +14,7 @@ Implements a joint lower limit map.
 import os
 import torch
 from fabrics_sim.taskmaps.maps_base import BaseMap
+
 
 class LowerJointLimitMap(BaseMap):
     def __init__(self, lower_joint_limits, batch_size, device):
@@ -30,16 +31,16 @@ class LowerJointLimitMap(BaseMap):
         self.batch_size = batch_size
 
         self.init_limits()
-    
+
     def init_limits(self):
         if (self.lower_joint_limits_batch is None):
             num_joints = len(self.lower_joint_limits)
-            self.lower_joint_limits_batch =\
+            self.lower_joint_limits_batch = \
                 torch.zeros(self.batch_size, num_joints, device=self.device)
             with torch.no_grad():
                 for i in range(num_joints):
-                    self.lower_joint_limits_batch[:,i] = self.lower_joint_limits[i]
-        
+                    self.lower_joint_limits_batch[:, i] = torch.tensor(self.lower_joint_limits[i], device=self.device)
+
                 # Create the Jacobian
                 dim = num_joints
                 single_jacobian = torch.eye(dim, dim, device=self.device)
@@ -47,6 +48,6 @@ class LowerJointLimitMap(BaseMap):
                 self.jacobian = single_jacobian.repeat(self.batch_size, 1, 1)
 
     def forward_position(self, q, features):
-        x = q - self.lower_joint_limits_batch 
+        x = q - self.lower_joint_limits_batch
 
         return (x, self.jacobian)
