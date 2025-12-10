@@ -27,36 +27,33 @@ from fabrics_sim.utils.rotation_utils import euler_to_matrix, matrix_to_euler
 from fabrics_sim.utils.rotation_utils import quaternion_to_matrix, matrix_to_quaternion
 
 
-class KukaAllegroPoseFabric(BaseFabric):
+class AllegroPoseFabric(BaseFabric):
     """
     Creates a fabric for the kuka-allegro that opens up a pose action space for the palm
     and PCA'ed action space for the hand. Includes self-collision, env collision avoidance,
     joint limiting, accel/jerk limiting, speed control, redundancy resolution.
     """
 
-    FINGER_CONTROL_FRAMES = ["index_biotac_tip", "middle_biotac_tip", "ring_biotac_tip", "thumb_biotac_tip"]
+    FINGER_CONTROL_FRAMES = ["index_biotac_tip", "middle_biotac_tip",
+                             "ring_biotac_tip", "thumb_biotac_tip"]
 
     def __init__(self, batch_size, device, timestep,
                  robot_base_transform: Optional[wp.transform] = None,
-                 use_finger_fabrics: bool = False,
                  graph_capturable=True):
         """
         Constructor. Specifies parameter file and constructs the fabric.
-        :param robot_base_transform: warp transform of robot base
         :param batch_size: size of the batch
         :param device: type str that sets the device for the fabric
         """
         # Load parameters
-        fabric_params_filename = "kuka_allegro_pose_params.yaml"
+        fabric_params_filename = "allegro_pose_params.yaml"
         super().__init__(device, batch_size, timestep, fabric_params_filename,
                          robot_base_transform=robot_base_transform,
                          graph_capturable=graph_capturable)
 
-        self.use_finger_fabrics = use_finger_fabrics
-
         # URDF filpath for allegro
         robot_dir_name = "kuka_allegro"
-        robot_name = "kuka_allegro"
+        robot_name = "allegro"
         self.urdf_path = get_robot_urdf_path(robot_dir_name, robot_name)
 
         self.load_robot(robot_dir_name, robot_name, batch_size)
@@ -64,31 +61,23 @@ class KukaAllegroPoseFabric(BaseFabric):
         # Going to set a default config for the cspace attractor that gets
         # used until an actual cspace command comes in
         default_config = \
-            torch.tensor([-0.85, -0.50, 0.76, 1.25, -1.76, 0.90, 0.64,
-                          0.0, 0.75, 0.75, 0.75,
+            torch.tensor([0.0, 0.75, 0.75, 0.75,
                           0.0, 0.75, 0.75, 0.75,
                           0.0, 0.75, 0.75, 0.75,
                           1.57, 0.5, 0.5, 0.5], device=self.device)
         self.default_config = default_config.unsqueeze(0).repeat(self.batch_size, 1)
-
-        # Store pca matrix for hand
-        self._pca_matrix = None
 
         # Construct the fabric.
         self.construct_fabric()
 
         # Allocate palm pose target tensor (b x (3 + 9))
         # 3 dim for origin target, 12 dim for stacked 3x3 transform target (rx', ry', rx')
-        self._palm_pose_target = torch.zeros(batch_size, 12, device=device)
-
-        # Allocate finger pose target: map of {finger_frame_name: tensor (b x (3 + 9))}
         self._finger_pose_targets = {
             control_frame_name: torch.zeros(batch_size, 12, device=device)
             for control_frame_name in self.FINGER_CONTROL_FRAMES
         }
 
         # Storing the target expressed in the taskspace actually used
-        self._native_palm_pose_target = None
         self._native_fingertips_pose_targets = {}
 
     def add_joint_limit_repulsion(self):
@@ -158,75 +147,6 @@ class KukaAllegroPoseFabric(BaseFabric):
                                self.device, graph_capturable=self.graph_capturable)
 
         # Add it to container list in the root space
-        self.add_fabric(taskmap_name, fabric_name, fabric)
-
-    def add_hand_fabric(self):
-        # TODO: this will make the PCA space fabric and place an attractor there
-        pca_matrix = torch.tensor([[-3.8872e-02, 3.7917e-01, 4.4703e-01, 7.1016e-03, 2.1159e-03,
-                                    3.2014e-01, 4.4660e-01, 5.2108e-02, 5.6869e-05, 2.9845e-01,
-                                    3.8575e-01, 7.5774e-03, -1.4790e-02, 9.8163e-02, 4.3551e-02,
-                                    3.1699e-01],
-                                   [-5.1148e-02, -1.3007e-01, 5.7727e-02, 5.7914e-01, 1.0156e-02,
-                                    -1.8469e-01, 5.3809e-02, 5.4888e-01, 1.3351e-04, -1.7747e-01,
-                                    2.7809e-02, 4.8187e-01, 2.9753e-02, 2.6149e-02, 6.6994e-02,
-                                    1.8117e-01],
-                                   [-5.7137e-02, -3.4707e-01, 3.3365e-01, -1.8029e-01, -4.3560e-02,
-                                    -4.7666e-01, 3.2517e-01, -1.5208e-01, -5.9691e-05, -4.5790e-01,
-                                    3.6536e-01, -1.3916e-01, 2.3925e-03, 3.7238e-02, -1.0124e-01,
-                                    -1.7442e-02],
-                                   [2.2795e-02, -3.4090e-02, 3.4366e-02, -2.6531e-02, 2.3471e-02,
-                                    4.6123e-02, 9.8059e-02, -1.2619e-03, -1.6452e-04, -1.3741e-02,
-                                    1.3813e-01, 2.8677e-02, 2.2661e-01, -5.9911e-01, 7.0257e-01,
-                                    -2.4525e-01],
-                                   [-4.4911e-02, -4.7156e-01, 9.3124e-02, 2.3135e-01, -2.4607e-03,
-                                    9.5564e-02, 1.2470e-01, 3.6613e-02, 1.3821e-04, 4.6072e-01,
-                                    9.9315e-02, -8.1080e-02, -4.7617e-01, -2.7734e-01, -2.3989e-01,
-                                    -3.1222e-01]], device=self.device)
-
-        self._pca_matrix = torch.clone(pca_matrix.detach())
-
-        # Now stack this PCA matrix with a left block of 0s, which will be used to project against the arm
-        # angles. Arm angles are not a dependency here so we wipe them out with 0s.
-        pca_matrix = torch.cat([torch.zeros(pca_matrix.shape[0], 7, device=self.device), pca_matrix], dim=1)
-
-        # Create taskmap and its container.
-        taskmap_name = "pca_hand"
-        taskmap = LinearMap(pca_matrix, self.device)
-        self.add_taskmap(taskmap_name, taskmap, graph_capturable=self.graph_capturable)
-
-        # Place an attractor in this space
-        fabric_name = "hand_attractor"
-        is_forcing = True
-        fabric = Attractor(is_forcing, self.fabric_params['hand_attractor'],
-                           self.device, graph_capturable=self.graph_capturable)
-
-        # Add it to container list
-        self.add_fabric(taskmap_name, fabric_name, fabric)
-
-    def add_palm_points_attractor(self):
-        """
-        Creates a taskmap of 3 noncollinear points on the gripper and constructs
-        a geometric attractor in this space.
-        """
-        # Set name for taskmap, create it, and add to pool of taskmaps.
-        taskmap_name = "palm"
-        # TODO: make the control point frames all the points in the gripper head and update code in
-        # target point calculation to reflect
-        control_point_frames = ["palm_link",
-                                "palm_x", "palm_x_neg",
-                                "palm_y", "palm_y_neg",
-                                "palm_z", "palm_z_neg"]
-        taskmap = RobotFrameOriginsTaskMap(self.urdf_path, self.robot_base_transform, control_point_frames,
-                                           self.batch_size, self.device)
-        self.add_taskmap(taskmap_name, taskmap, graph_capturable=self.graph_capturable)
-
-        # Create and add geometric attractor
-        fabric_name = "palm_attractor"
-        is_forcing = True
-        fabric = Attractor(is_forcing, self.fabric_params['palm_attractor'],
-                           self.device, graph_capturable=self.graph_capturable)
-
-        # Add it to container list
         self.add_fabric(taskmap_name, fabric_name, fabric)
 
     def add_finger_points_attractor(self):
@@ -338,75 +258,14 @@ class KukaAllegroPoseFabric(BaseFabric):
         # Add geometric cspace attractor
         self.add_cspace_attractor(False)
 
-        # Add finger attractors
-        if self.use_finger_fabrics:
-            self.add_finger_points_attractor()
-        else:
-            # Add hand attractor
-            self.add_hand_fabric()
-
-            # Add multi-point gripper attractor
-            self.add_palm_points_attractor()
+        # Add multi-point gripper attractor
+        self.add_finger_points_attractor()
 
         # Add collision avoidance
         self.add_body_repulsion()
 
         # Add energy
         self.add_cspace_energy()
-
-    def get_palm_pose_target_as_points(self):
-        """
-        Get palm pose target as a set of points (no orientation) in gripper frame.
-        ------------------------------------------
-        :return gripper_targets: bx(3n) Pytorch tensor, where n is number of
-                                 gripper points
-        """
-
-        palm_transform = torch.zeros(self.batch_size, 4, 4, device=self.device)
-        palm_transform[:, 3, 3] = 1.
-        palm_transform[:, :3, :3] = torch.transpose(self._palm_pose_target[:, 3:].reshape(self.batch_size, 3, 3), 1, 2)
-        palm_transform[:, :3, 3] = self._palm_pose_target[:, :3]
-
-        x_point = torch.zeros(self.batch_size, 4, device=self.device)
-        x_neg_point = torch.zeros(self.batch_size, 4, device=self.device)
-        x_point[:, 3] = 1.
-        x_neg_point[:, 3] = 1.
-        x_point[:, 0] = 0.25
-        x_neg_point[:, 0] = -0.25
-
-        y_point = torch.zeros(self.batch_size, 4, device=self.device)
-        y_neg_point = torch.zeros(self.batch_size, 4, device=self.device)
-        y_point[:, 3] = 1.
-        y_neg_point[:, 3] = 1.
-        y_point[:, 1] = 0.25
-        y_neg_point[:, 1] = -0.25
-
-        z_point = torch.zeros(self.batch_size, 4, device=self.device)
-        z_neg_point = torch.zeros(self.batch_size, 4, device=self.device)
-        z_point[:, 3] = 1.
-        z_neg_point[:, 3] = 1.
-        z_point[:, 2] = 0.25
-        z_neg_point[:, 2] = -0.25
-
-        # Fill in targets
-        palm_targets = torch.zeros(self.batch_size, 7 * 3, device=self.device)
-
-        # Origin
-        palm_targets[:, :3] = self._palm_pose_target[:, :3]
-
-        # x_axis
-        palm_targets[:, 3:6] = torch.bmm(palm_transform, x_point.unsqueeze(2)).squeeze(2)[:, :3]
-        palm_targets[:, 6:9] = torch.bmm(palm_transform, x_neg_point.unsqueeze(2)).squeeze(2)[:, :3]
-
-        # y_axis
-        palm_targets[:, 9:12] = torch.bmm(palm_transform, y_point.unsqueeze(2)).squeeze(2)[:, :3]
-        palm_targets[:, 12:15] = torch.bmm(palm_transform, y_neg_point.unsqueeze(2)).squeeze(2)[:, :3]
-
-        # z_axis
-        palm_targets[:, 15:18] = torch.bmm(palm_transform, z_point.unsqueeze(2)).squeeze(2)[:, :3]
-        palm_targets[:, 18:21] = torch.bmm(palm_transform, z_neg_point.unsqueeze(2)).squeeze(2)[:, :3]
-
-        return palm_targets
 
     def get_finger_pose_target_as_point(self, control_frame_name):
         """
@@ -440,59 +299,7 @@ class KukaAllegroPoseFabric(BaseFabric):
         """
         return self.base_fabric_repulsion.collision_status
 
-    def get_palm_pose(self, cspace_position: torch.Tensor, orientation_convention: str):
-        """
-        Calculates the pose of the palm given joint angles and the given orientation convention.
-        ------------------------------------------
-        :param cspace_position: bx7 Pytorch tensor, joint position
-        :param orientation_convention: str, either "euler_zyx" or "quaternion" (x, y, z, w)
-        :return palm_pose: bx6 or bx7 Pytorch tensor that is the pose of the palm, either:
-                           (x,y,z,eulerz, eulery, eulerx) or
-                           (x,y,z, rx, ry, rz, rw)
-        """
-
-        # Calculate the points on the hand given the cspace position
-        palm_points, _ = self.get_taskmap("palm")(cspace_position, None)
-
-        # Extract the origin, x-axis, y-axis, and z-axis
-        palm_origin = palm_points[:, :3]
-        x_point = palm_points[:, 3:6]
-        y_point = palm_points[:, 9:12]
-        z_point = palm_points[:, 15:18]
-
-        x_axis = torch.nn.functional.normalize(x_point - palm_origin, dim=1)
-        y_axis = torch.nn.functional.normalize(y_point - palm_origin, dim=1)
-        z_axis = torch.nn.functional.normalize(z_point - palm_origin, dim=1)
-
-        rotation_matrix = torch.zeros(self.batch_size, 3, 3, device=self.device)
-        rotation_matrix[:, :, 0] = x_axis
-        rotation_matrix[:, :, 1] = y_axis
-        rotation_matrix[:, :, 2] = z_axis
-
-        orientation = None
-        if orientation_convention == "euler_zyx":
-            # orientation = transforms.matrix_to_euler_angles(rotation_matrix, "ZYX")
-            orientation = matrix_to_euler(rotation_matrix)
-        elif orientation_convention == "quaternion":
-            # orientation = transforms.matrix_to_quaternion(rotation_matrix)[:, [1, 2, 3, 0]]
-            orientation = matrix_to_quaternion(rotation_matrix)[:, [1, 2, 3, 0]]
-        else:
-            raise ValueError('orientation_convention parameter must be either "euler_zyx" or "quaternion"')
-
-        palm_pose = torch.cat([palm_origin, orientation], dim=-1)
-
-        return palm_pose
-
-    @property
-    def pca_matrix(self):
-        return self._pca_matrix
-
-    @pca_matrix.setter
-    def pca_matrix(self, pca_matrix):
-        self._pca_matrix = pca_matrix
-
-    def set_orientation_target(self, in_target: torch.Tensor, out_target: torch.Tensor,
-                               orientation_convention: str):
+    def set_orientation_target(self, in_target: torch.Tensor, out_target: torch.Tensor):
         # First convert palm target orientation from specified convention to rotation matrix
         if orientation_convention == "euler_zyx":
             assert (in_target.shape[1] == 6), \
@@ -511,31 +318,13 @@ class KukaAllegroPoseFabric(BaseFabric):
         else:
             raise ValueError('orientation_convention parameter must be either "euler_zyx" or "quaternion"')
 
-    def set_palm_pose_target(self, palm_pose_target: torch.Tensor, orientation_convention: str):
-        # Insert translational targets into class tensor for holding the target pose
-        self._palm_pose_target[:, :3] = palm_pose_target[:, :3]
-        self.set_orientation_target(palm_pose_target, self._palm_pose_target, orientation_convention)
-        palm_pose_target = self.get_palm_pose_target_as_points()
-
-        if self._native_palm_pose_target is None:
-            self._native_palm_pose_target = torch.clone(palm_pose_target)
-        else:
-            self._native_palm_pose_target.copy_(palm_pose_target)
-
-        # Pass the gripper target to the gripper attractors and the damping target
-        try:
-            self.fabrics_features["palm"]["palm_attractor"] = self._native_palm_pose_target
-            self.get_fabric_term("palm", "palm_attractor").damping_position = self._native_palm_pose_target
-        except:
-            raise ValueError('No task map `palm` or `palm_attractor`')
-
-    def set_finger_pose_targets(self, finger_targets: dict[str, torch.Tensor], orientation_convention: str):
+    def set_finger_pose_targets(self, finger_targets: dict[str, torch.Tensor]):
         # Update `self._finger_pose_targets`
         # Insert translational targets into class tensor for holding the target pose
         for finger_part_name, finger_target in self._finger_pose_targets.items():
             in_finger_target = finger_targets[finger_part_name]
-            finger_target[:, :3] = in_finger_target[:, :3]
-            self.set_orientation_target(in_finger_target, finger_target, orientation_convention)
+            finger_target[:, :3] = finger_targets[:, :3]
+            self.set_orientation_target(in_finger_target, finger_target)
 
         # If multi-point attractor is being used, then convert pose target to targets in the right space
         # from `self._finger_pose_targets`
@@ -550,16 +339,14 @@ class KukaAllegroPoseFabric(BaseFabric):
             # Pass the gripper target to the gripper attractors and the damping target
             frame_attractor_name = f'{control_frame_name}_attractor'
             try:
-                # NOTE: `point_target` is already temp in-memory, so can be reused redirectly without copy/clone!
-                self.fabrics_features[control_frame_name][frame_attractor_name] = point_target
-                self.get_fabric_term(control_frame_name,
-                                     frame_attractor_name).damping_position = point_target
+                self.fabrics_features[control_frame_name][frame_attractor_name] = \
+                    self._native_fingertips_pose_targets[control_frame_name]
+                self.get_fabric_term(control_frame_name, frame_attractor_name).damping_position = \
+                    self._native_fingertips_pose_targets[control_frame_name]
             except:
                 raise ValueError(f'No task map {control_frame_name} or {frame_attractor_name}')
 
-    def set_features(self, hand_target, palm_pose_target,
-                     finger_pose_targets,
-                     orientation_convention,
+    def set_features(self, in_finger_targets, orientation_convention,
                      batched_cspace_position, batched_cspace_velocity,
                      object_ids,
                      object_indicator,
@@ -567,13 +354,7 @@ class KukaAllegroPoseFabric(BaseFabric):
         """
         Passes the input features to the various fabric terms.
         -----------------------------
-        :param hand_target: bx5 Pytorch tensor that sets the desired location in PCA space.
-                            Controls the fingers of the Allegro.
-        :param palm_pose_target: bxm Pytorch tensor (origin, rotation), where rotation
-                            can have 3 elements for Euler "ZYX" angles 
-                            (x_angle, y_angle, z_angle) or
-                            4 elements for quaternion (x, y, z, w)
-        :param finger_pose_targets: map of finger-part pose targets, each of which is a bxm Pytorch tensor (origin, rotation),
+        :param in_finger_targets: map of finger-part targets, each of which is a bxm Pytorch tensor (origin, rotation),
                where rotation can have 3 elements for Euler "ZYX" angles
                (x_angle, y_angle, z_angle) or 4 elements for quaternion (x, y, z, w)
         :param orientation_convention: str, either "euler_zyx" or "quaternion" (x, y, z, w)
@@ -584,15 +365,10 @@ class KukaAllegroPoseFabric(BaseFabric):
                                  of a Warp mesh in object_ids at corresponding index
                                  0=no mesh, 1=mesh
         """
-        if not self.use_finger_fabrics:
-            self.fabrics_features["pca_hand"]["hand_attractor"] = hand_target
         self.fabrics_features["identity"]["cspace_attractor"] = self.default_config
 
         # Set pose targets
-        if self.use_finger_fabrics:
-            self.set_finger_pose_targets(finger_pose_targets, orientation_convention)
-        else:
-            self.set_palm_pose_target(palm_pose_target, orientation_convention)
+        self.set_finger_pose_targets(finger_pose_targets)
 
         # Calculate current location of body sphere origins and their velocity
         body_point_pos, jac = self.get_taskmap("body_points")(batched_cspace_position, None)
