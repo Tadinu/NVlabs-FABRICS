@@ -26,7 +26,10 @@ class RobotVisualizer():
         from omni.isaac.core.articulations import ArticulationView
         from omni.isaac.core.utils.stage import add_reference_to_stage
         from omni.isaac.core.prims import XFormPrimView
-        
+
+        from isaacsim.util.debug_draw import _debug_draw
+        self.drawer = _debug_draw.acquire_debug_draw_interface()
+
         # Fabrics imports
         from fabrics_sim.utils.path_utils import get_world_path, get_object_urdf_path, get_robot_usd_path
 
@@ -197,6 +200,12 @@ class RobotVisualizer():
         # set the joint positions for each robot
         self.robots_view.set_joint_positions(joint_position[:, self.joint_indices])
         self.robots_view.set_joint_velocities(joint_velocity[:, self.joint_indices])
+
+        # draw target
+        self.drawer.clear_points()
+        pos = (target_position[:, :3] + self.robot_base_positions).tolist()
+        # quat = [self.quat_from_euler(target_position[i, 3:]) for i in range(target_position.shape[0])]
+        self.drawer.draw_points(pos, [[0, 1, 0, 1]] * len(pos), [20] * len(pos))
 
         # update the sphere positions
         if sphere_position is not None:

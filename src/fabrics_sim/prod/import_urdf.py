@@ -14,7 +14,7 @@ collision data structures which can be slow.
 """
 
 try:
-    import urdfpy
+    import yourdfpy
 except:
     pass
 
@@ -28,12 +28,82 @@ import warp as wp
 from warp.sim.model import Mesh
 
 
+# Ref: https://github.com/mmatl/urdfpy/blob/master/urdfpy/utils.py
+def matrix_to_rpy(R, solution=1):
+    """Convert a 3x3 transform matrix to roll-pitch-yaw coordinates.
+
+    The roll-pitchRyaw axes in a typical URDF are defined as a
+    rotation of ``r`` radians around the x-axis followed by a rotation of
+    ``p`` radians around the y-axis followed by a rotation of ``y`` radians
+    around the z-axis. These are the Z1-Y2-X3 Tait-Bryan angles. See
+    Wikipedia_ for more information.
+
+    .. _Wikipedia: https://en.wikipedia.org/wiki/Euler_angles#Rotation_matrix
+
+    There are typically two possible roll-pitch-yaw coordinates that could have
+    created a given rotation matrix. Specify ``solution=1`` for the first one
+    and ``solution=2`` for the second one.
+
+    Parameters
+    ----------
+    R : (3,3) float
+        A 3x3 homogenous rotation matrix.
+    solution : int
+        Either 1 or 2, indicating which solution to return.
+
+    Returns
+    -------
+    coords : (3,) float
+        The roll-pitch-yaw coordinates in order (x-rot, y-rot, z-rot).
+    """
+    R = np.asanyarray(R, dtype=np.float64)
+    r = 0.0
+    p = 0.0
+    y = 0.0
+
+    if np.abs(R[2, 0]) >= 1.0 - 1e-12:
+        y = 0.0
+        if R[2, 0] < 0:
+            p = np.pi / 2
+            r = np.arctan2(R[0, 1], R[0, 2])
+        else:
+            p = -np.pi / 2
+            r = np.arctan2(-R[0, 1], -R[0, 2])
+    else:
+        if solution == 1:
+            p = -np.arcsin(R[2, 0])
+        else:
+            p = np.pi + np.arcsin(R[2, 0])
+        r = np.arctan2(R[2, 1] / np.cos(p), R[2, 2] / np.cos(p))
+        y = np.arctan2(R[1, 0] / np.cos(p), R[0, 0] / np.cos(p))
+
+    return np.array([r, p, y], dtype=np.float64)
+
+
+# Ref: https://github.com/mmatl/urdfpy/blob/master/urdfpy/utils.py
+def matrix_to_xyz_rpy(matrix):
+    """Convert a 4x4 homogenous matrix to xyzrpy coordinates.
+
+    Parameters
+    ----------
+    matrix : (4,4) float
+        The homogenous transform matrix.
+
+    Returns
+    -------
+    xyz_rpy : (6,) float
+        The xyz_rpy vector.
+    """
+    xyz = matrix[:3, 3]
+    rpy = matrix_to_rpy(matrix[:3, :3])
+    return np.hstack((xyz, rpy))
+
 def urdf_add_collision(builder, link, collisions, density, shape_ke, shape_kd, shape_kf, shape_mu):
 
     # add geometry
     for collision in collisions:
 
-        origin = urdfpy.matrix_to_xyz_rpy(collision.origin)
+        origin = yourdfpy.matrix_to_xyz_rpy(collision.origin)
 
         pos = origin[0:3]
         rot = wp.quat_rpy(*origin[3:6])
@@ -139,15 +209,15 @@ def expand_link(branches, link_name, joint_list):
 
 
 class KinematicTree(object):
-    """ Simple representation of the kinematic tree stored in a urdfpy URDF object.
+    """ Simple representation of the kinematic tree stored in a yourdfpy URDF object.
 
     Represents the tree simply as a map from link name to the list of branches extending from that link.
     The branches for each link are listed in the order they're specified in the URDF.
     """
-    def __init__(self, robot):
+    def __init__(self, robot: yourdfpy.URDF):
         self.robot = robot
         self.branches = {}
-        for joint in robot.joints:
+        for _, joint in robot.joint_map.items():
             self.get_link_branches(joint.parent).append(joint)
 
     def get_link_branches(self, name):
@@ -165,7 +235,7 @@ class KinematicTree(object):
         """ Returns the list of joints in depth first order.
         """
         joint_list = []
-        expand_link(self.branches, self.robot.base_link.name, joint_list)
+        expand_link(self.branches, self.robot.base_link, joint_list)
         return joint_list
 
 
@@ -199,8 +269,8 @@ def parse_urdf_annotated(
         verbose=False):
 
     if verbose:
-        print("urdfpy loading:", filename)
-    robot = urdfpy.URDF.load(filename)
+        print("yourdfpy loading:", filename)
+    robot = yourdfpy.URDF.load(filename)
     kinematic_tree = KinematicTree(robot)
     depth_first_joints = kinematic_tree.get_depth_first_joints()
     if verbose:
@@ -221,9 +291,10 @@ def parse_urdf_annotated(
     if verbose:
         print("importing inertial props")
     if density == 0.0:
-        com = urdfpy.matrix_to_xyz_rpy(robot.base_link.inertial.origin)[0:3]
-        I_m = wp.mat33(robot.base_link.inertial.inertia)
-        m = robot.base_link.inertial.mass
+        base_link = robot.link_map[robot.base_link]
+        com = matrix_to_xyz_rpy(base_link.inertial.origin)[0:3]
+        I_m = wp.mat33(base_link.inertial.inertia)
+        m = base_link.inertial.mass
     else:
         com = np.zeros(3)
         I_m = wp.mat33(np.zeros((3, 3)))
@@ -273,7 +344,7 @@ def parse_urdf_annotated(
             if verbose:
                 print("  <done>")
 
-    link_index[robot.base_link.name] = root
+    link_index[robot.base_link] = root
     link2cspace.append(-1) # No corresponding cspace dim for the root link.
 
     # add children
@@ -286,15 +357,15 @@ def parse_urdf_annotated(
         type = None
         axis = (0.0, 0.0, 0.0)
 
-        if joint.joint_type == "revolute" or joint.joint_type == "continuous":
+        if joint.type == "revolute" or joint.type == "continuous":
             type = wp.sim.JOINT_REVOLUTE
             axis = joint.axis
-        if joint.joint_type == "prismatic":
+        if joint.type == "prismatic":
             type = wp.sim.JOINT_PRISMATIC
             axis = joint.axis
-        if joint.joint_type == "fixed":
+        if joint.type == "fixed":
             type = wp.sim.JOINT_FIXED
-        if joint.joint_type == "floating":
+        if joint.type == "floating":
             type = wp.sim.JOINT_FREE
 
         if joint.parent not in link_index:
@@ -303,7 +374,7 @@ def parse_urdf_annotated(
             raise RuntimeError("Parent not found: {}".format(joint.parent))
         parent = link_index[joint.parent]
 
-        origin = urdfpy.matrix_to_xyz_rpy(joint.origin)
+        origin = matrix_to_xyz_rpy(joint.origin)
         pos = origin[0:3]
         rot = wp.quat_rpy(*origin[3:6])
 
@@ -323,10 +394,12 @@ def parse_urdf_annotated(
             if joint.dynamics.damping:
                 damping = joint.dynamics.damping
 
-        if density == 0.0:
-            com = urdfpy.matrix_to_xyz_rpy(robot.link_map[joint.child].inertial.origin)[0:3]
-            I_m = wp.mat33(robot.link_map[joint.child].inertial.inertia)
-            m = robot.link_map[joint.child].inertial.mass
+        child_inertial = robot.link_map[joint.child].inertial
+        if density == 0.0 and child_inertial:
+            com = matrix_to_xyz_rpy(child_inertial.origin)[0:3] if child_inertial.origin is not None\
+                else np.zeros(3)
+            I_m = wp.mat33(child_inertial.inertia)
+            m = child_inertial.mass
         else:
             com = np.zeros(3)
             I_m = wp.mat33(np.zeros((3, 3)))

@@ -11,8 +11,12 @@
 Implements several utility functions.
 """
 
+import os
+import sys
 import torch
 import warp as wp
+
+from fabrics_sim import ROOT_DIR
 
 def initialize_warp(warp_cache_name):
     """
@@ -24,7 +28,7 @@ def initialize_warp(warp_cache_name):
     import os
     import warp as wp
 
-    wp.config.kernel_cache_dir = '/tmp/.cache/warp/' + wp.config.version + "/warpcache_" + warp_cache_name
+    wp.config.kernel_cache_dir = f"{ROOT_DIR}/.cache/warp/{wp.config.version}/warpcache_{warp_cache_name}"
     wp.init()
 
     # clear kernel cache (forces fresh kernel builds every time)

@@ -76,14 +76,17 @@ class KukaAllegroPoseFabric(BaseFabric):
         Adds forcing joint repulsion to the fabric.
         """
 
+        joints = self.urdfpy_robot.joint_map.items()
         # Create upper joint limiting
         # Pulling lower joint limits from urdf
-        joints = self.urdfpy_robot.joints # this is a list
         upper_joint_limits = []
-        for i in range(len(joints)):
+        lower_joint_limits = []
+        for joint_name, joint in joints:
             # NOTE: We are only supporting revolute joints right now.
-            if joints[i].joint_type == 'revolute':
-                upper_joint_limits.append(joints[i].limit.upper)
+            if joint.type == 'revolute':
+                upper_joint_limits.append(joint.limit.upper)
+                lower_joint_limits.append(joint.limit.lower)
+
         # Create upper joint limiting
         # Create taskmap and its container.
         taskmap_name = "upper_joint_limit"
@@ -98,12 +101,6 @@ class KukaAllegroPoseFabric(BaseFabric):
         self.add_fabric(taskmap_name, fabric_name, fabric)
         
         # Create lower joint limiting
-        # Pulling lower joint limits from urdf
-        lower_joint_limits = []
-        for i in range(len(joints)):
-            if joints[i].joint_type == 'revolute':
-                lower_joint_limits.append(joints[i].limit.lower)
-
         # Create taskmap and its container.
         taskmap_name = "lower_joint_limit"
         taskmap = LowerJointLimitMap(lower_joint_limits, self.batch_size, self.device)

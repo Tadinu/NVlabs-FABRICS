@@ -17,10 +17,19 @@ import argparse
 import torch
 import numpy as np
 
+from fabrics_sim.utils.utils import initialize_warp, capture_fabric
+
+# Declare device for fabric
+device_int = 0
+device = 'cuda:' + str(device_int)
+
+# Set the warp cache directory based on device int
+warp_cache_dir = ""
+initialize_warp(str(device_int))
+
 # Fabrics imports
 from fabrics_sim.fabrics.kuka_allegro_pose_fabric import KukaAllegroPoseFabric
 from fabrics_sim.integrator.integrators import DisplacementIntegrator
-from fabrics_sim.utils.utils import initialize_warp, capture_fabric
 from fabrics_sim.visualization.robot_visualizer import RobotVisualizer
 from fabrics_sim.worlds.world_mesh_model import WorldMeshesModel
 
@@ -41,10 +50,10 @@ torch.set_printoptions(precision=4)
 
 # Parse arguments
 parser = argparse.ArgumentParser(description='Kuka-Allegro fabric example.')
-parser.add_argument('--batch_size', type=int, required=True, help='Specify batch size.')
-parser.add_argument('--render', action='store_true', help='True to render fabric motion.')
-parser.add_argument('--vis_col_spheres', action='store_true', help='True to visualize collision spheres of robot.')
-parser.add_argument('--cuda_graph', action='store_true', help='True to enable graph capture of fabric.')
+parser.add_argument('--batch_size', type=int, default=2, help='Specify batch size.')
+parser.add_argument('--render', action='store_true', default=True, help='True to render fabric motion.')
+parser.add_argument('--vis_col_spheres', action='store_true', default=True, help='True to visualize collision spheres of robot.')
+parser.add_argument('--cuda_graph', action='store_true', default=True, help='True to enable graph capture of fabric.')
 args = parser.parse_args()
 
 # Settings
@@ -52,14 +61,6 @@ use_viz = args.render
 render_spheres = args.vis_col_spheres
 cuda_graph = args.cuda_graph
 batch_size = args.batch_size
-
-# Declare device for fabric
-device_int = 0
-device = 'cuda:' + str(device_int)
-
-# Set the warp cache directory based on device int
-warp_cache_dir = ""
-initialize_warp(str(device_int))
 
 # This creates a world model that book keeps all the meshes
 # in the world, their pose, name, etc.

@@ -26,6 +26,7 @@
 .cache/*
 .thumbs/*
 __pycache__/*
+*/*/.cache/*
 
 # Project files
 .ropeproject

@@ -11,8 +11,8 @@ import os
 
 import torch
 import numpy as np
-from urdfpy import URDF
 import yaml
+from yourdfpy import URDF
 
 from fabrics_sim.fabrics.model_batch_builder import create_model_batch
 from fabrics_sim.fabrics.taskmap_container import TaskmapContainer
@@ -675,17 +675,16 @@ class BaseFabric(torch.nn.Module):
             initial_position = wp.vec3(0., 0., 0.)
             initial_transform = wp.transform(initial_position, initial_rotation)
 
-            # Make urdfpy robot so we can use it to access joint limits later
+            # Make yourdfpy robot so we can use it to access joint limits later
             self.urdfpy_robot = URDF.load(robot_urdf_filename)
             
             # Count number of active joints
-            joints = self.urdfpy_robot.joints # this is a list
             self._num_joints = 0
-            for i in range(len(joints)):
+            for joint_name, joint in self.urdfpy_robot.joint_map.items():
                 # NOTE: We are only supporting revolute joints right now.
-                if joints[i].joint_type == 'revolute':
+                if joint.type == 'revolute':
                     self._num_joints += 1
-                    self.joint_names.append(joints[i].name)
+                    self.joint_names.append(joint_name)
 
             # Convert to Warp object
             print('importing robot')

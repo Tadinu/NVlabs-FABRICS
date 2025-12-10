@@ -143,7 +143,6 @@ Question: Don't we also need a transform from from the child coordinates to wher
 with the link? DH makes this easy, but that also defines the axis, which we're assuming is passed in
 here.
 
-Answer: https://urdfpy.readthedocs.io/en/latest/generated/urdfpy.Joint.html#urdfpy.Joint
 "joint.origin – The pose of the child link with respect to the parent link’s frame. The joint frame
 is defined to be coincident with the child link’s frame, so this is also the pose of the joint frame
 with respect to the parent link’s frame."

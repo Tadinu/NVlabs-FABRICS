@@ -8,6 +8,9 @@
 # its affiliates is strictly prohibited.
 """Fabrics Sim package."""
 
+import os
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 # NOTE (roflaherty): This is inspired by how matplotlib does creates its version value.
 # https://github.com/matplotlib/matplotlib/blob/master/lib/matplotlib/__init__.py#L161
